@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# Check for lint/type-check exception comments that bypass guardrails
+# This must run FIRST before any formatting changes the staged content
+bun run scripts/check-lint-exceptions.ts
+
+# Block introduction of actions/github-script in workflow files
+# All workflow logic must be in TypeScript actions with 100% test coverage
+bun run scripts/check-github-script.ts
+
+# Verify vitest coverage thresholds remain at 100%
+# Prevents lowering of code coverage requirements
+bun run scripts/check-coverage-thresholds.ts
+
+# Auto-format code first so checks run on formatted code
+bun pretty-quick --staged
+
+# Run type checking
+bun typecheck
+
+# Run linting
+bun lint
+
+# Run tests with coverage (enforces 90% branch threshold)
+bun test:coverage

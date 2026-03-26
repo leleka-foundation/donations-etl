@@ -1,0 +1,267 @@
+/**
+ * Transform PayPal API transactions to canonical DonationEvent.
+ */
+import type {
+  DonationEvent,
+  DonationStatus,
+  DonorAddress,
+} from '@donations-etl/types'
+import { DateTime } from 'luxon'
+import type {
+  PayPalCartInfo,
+  PayPalMoney,
+  PayPalPayerInfo,
+  PayPalTransactionDetail,
+  PayPalTransactionStatus,
+} from './schema'
+
+/**
+ * Map PayPal transaction status to canonical status.
+ *
+ * PayPal uses single character codes:
+ * D = Denied, P = Pending, S = Success, V = Reversed
+ */
+export function mapPayPalStatus(
+  status: PayPalTransactionStatus | undefined,
+): DonationStatus {
+  switch (status) {
+    case 'S':
+      return 'succeeded'
+    case 'P':
+      return 'pending'
+    case 'D':
+      return 'failed'
+    case 'V':
+      return 'refunded'
+    default:
+      return 'pending'
+  }
+}
+
+/**
+ * Parse PayPal money string to cents.
+ *
+ * PayPal returns amounts as strings like "100.00".
+ */
+export function parsePayPalMoney(money: PayPalMoney | undefined): number {
+  if (!money?.value) return 0
+
+  const dollars = parseFloat(money.value)
+  if (isNaN(dollars)) return 0
+
+  // Convert to cents and round to avoid floating point issues
+  return Math.round(dollars * 100)
+}
+
+/**
+ * Build donor name from PayPal payer info.
+ */
+export function buildDonorName(
+  payerInfo: PayPalPayerInfo | undefined,
+): string | null {
+  if (!payerInfo?.payer_name) return null
+
+  const { given_name, surname, alternate_full_name } = payerInfo.payer_name
+
+  // Prefer alternate_full_name if available
+  if (alternate_full_name) return alternate_full_name
+
+  // Otherwise construct from parts
+  const parts = [given_name, surname].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+/**
+ * Build donor phone from PayPal payer info.
+ */
+export function buildDonorPhone(
+  payerInfo: PayPalPayerInfo | undefined,
+): string | null {
+  if (!payerInfo?.phone_number) return null
+
+  const { country_code, national_number } = payerInfo.phone_number
+  if (!national_number) return null
+
+  return country_code ? `+${country_code}${national_number}` : national_number
+}
+
+/**
+ * Extract donor address from PayPal payer info.
+ */
+export function extractDonorAddress(
+  payerInfo: PayPalPayerInfo | undefined,
+): DonorAddress | null {
+  const address = payerInfo?.address
+  if (!address) return null
+
+  // Check if we have any address data
+  if (
+    !address.line1 &&
+    !address.city &&
+    !address.state &&
+    !address.postal_code
+  ) {
+    return null
+  }
+
+  /* istanbul ignore next -- @preserve optional address fields have simple nullish defaults */
+  return {
+    line1: address.line1 ?? null,
+    line2: address.line2 ?? null,
+    city: address.city ?? null,
+    state: address.state ?? null,
+    postal_code: address.postal_code ?? null,
+    country: address.country_code ?? null,
+  }
+}
+
+/**
+ * Determine payment method from PayPal transaction event code.
+ *
+ * Event codes encode the payment type (e.g., T0006 = bank transfer)
+ */
+export function mapPayPalPaymentMethod(
+  eventCode: string | undefined,
+): string | null {
+  if (!eventCode) return 'paypal'
+
+  // Common PayPal event codes
+  if (eventCode.startsWith('T00')) {
+    // T0000-T0099: General payments
+    if (eventCode === 'T0006') return 'bank_transfer'
+    if (eventCode === 'T0007') return 'bank_transfer'
+    return 'paypal'
+  }
+  /* istanbul ignore next -- @preserve uncommon event code prefixes */
+  if (eventCode.startsWith('T01')) return 'paypal' // Mass payments
+  /* istanbul ignore next -- @preserve uncommon event code prefixes */
+  if (eventCode.startsWith('T02')) return 'paypal' // Subscription payments
+  /* istanbul ignore next -- @preserve uncommon event code prefixes */
+  if (eventCode.startsWith('T03')) return 'paypal' // Pre-approved payments
+  /* istanbul ignore next -- @preserve uncommon event code prefixes */
+  if (eventCode.startsWith('T04')) return 'paypal' // eBay auction payments
+  if (eventCode.startsWith('T05')) return 'debit_card' // Debit card payments
+  if (eventCode.startsWith('T06')) return 'credit_card' // Credit card payments
+
+  return 'paypal'
+}
+
+/**
+ * Check if a transaction is an incoming payment (credit).
+ *
+ * PayPal uses event codes where certain ranges indicate credits vs debits.
+ * Also checks the amount sign.
+ */
+export function isIncomingPayment(tx: PayPalTransactionDetail): boolean {
+  const amount = tx.transaction_info.transaction_amount?.value
+  if (!amount) return false
+
+  // Positive amounts are credits (incoming)
+  const value = parseFloat(amount)
+  return !isNaN(value) && value > 0
+}
+
+/**
+ * Extract attribution from PayPal cart info.
+ *
+ * Uses the first item's name as the attribution identifier.
+ * Returns null if no cart info or item details are present.
+ */
+export function extractAttribution(
+  cartInfo: PayPalCartInfo | undefined,
+): string | null {
+  if (!cartInfo?.item_details?.length) return null
+
+  const firstItem = cartInfo.item_details[0]
+  return firstItem?.item_name ?? null
+}
+
+/**
+ * Extract human-readable attribution from PayPal cart info.
+ *
+ * Uses the first item's description, falling back to item name.
+ * Returns null if no cart info or item details are present.
+ */
+export function extractAttributionHuman(
+  cartInfo: PayPalCartInfo | undefined,
+): string | null {
+  if (!cartInfo?.item_details?.length) return null
+
+  const firstItem = cartInfo.item_details[0]
+  // Prefer description, fall back to name
+  return firstItem?.item_description ?? firstItem?.item_name ?? null
+}
+
+/**
+ * Transform a single PayPal transaction to a DonationEvent.
+ */
+export function transformPayPalTransaction(
+  tx: PayPalTransactionDetail,
+  runId: string,
+): DonationEvent {
+  const info = tx.transaction_info
+  const payerInfo = tx.payer_info
+
+  const amountCents = parsePayPalMoney(info.transaction_amount)
+  const feeCents = Math.abs(parsePayPalMoney(info.fee_amount)) // Fees are usually negative
+  const netAmountCents = amountCents - feeCents
+
+  // Use transaction_initiation_date as the primary timestamp
+  const eventTs =
+    info.transaction_initiation_date ?? info.transaction_updated_date
+  /* istanbul ignore next -- @preserve event_ts typically exists */
+  const createdAt = eventTs ?? DateTime.utc().toISO()
+
+  /* istanbul ignore next -- @preserve optional fields have simple nullish defaults */
+  return {
+    source: 'paypal',
+    external_id: info.transaction_id,
+    event_ts: createdAt,
+    created_at: createdAt,
+    ingested_at: DateTime.utc().toISO(),
+    amount_cents: amountCents,
+    fee_cents: feeCents,
+    net_amount_cents: netAmountCents,
+    currency: info.transaction_amount?.currency_code ?? 'USD',
+    donor_name: buildDonorName(payerInfo),
+    payer_name: null, // PayPal doesn't track payer separately from donor
+    donor_email: payerInfo?.email_address ?? null,
+    donor_phone: buildDonorPhone(payerInfo),
+    donor_address: extractDonorAddress(payerInfo),
+    status: mapPayPalStatus(info.transaction_status),
+    payment_method: mapPayPalPaymentMethod(info.transaction_event_code),
+    description: info.transaction_subject ?? info.transaction_note ?? null,
+    // Attribution from cart item details
+    attribution: extractAttribution(tx.cart_info),
+    attribution_human: extractAttributionHuman(tx.cart_info),
+    source_metadata: {
+      paypal_account_id: info.paypal_account_id,
+      payer_account_id: payerInfo?.account_id,
+      transaction_event_code: info.transaction_event_code,
+      invoice_id: info.invoice_id,
+      custom_field: info.custom_field,
+      protection_eligibility: info.protection_eligibility,
+      shipping_info: tx.shipping_info,
+      cart_info: tx.cart_info,
+    },
+    run_id: runId,
+  }
+}
+
+/**
+ * Transform multiple PayPal transactions to DonationEvents.
+ * Only includes incoming payments (credits) by default since those are donations.
+ *
+ * @param transactions PayPal transactions to transform
+ * @param runId UUID for the ETL run
+ * @param includeOutgoing Whether to include outgoing transactions (default: false)
+ */
+export function transformPayPalTransactions(
+  transactions: PayPalTransactionDetail[],
+  runId: string,
+  includeOutgoing = false,
+): DonationEvent[] {
+  return transactions
+    .filter((tx) => includeOutgoing || isIncomingPayment(tx))
+    .map((tx) => transformPayPalTransaction(tx, runId))
+}

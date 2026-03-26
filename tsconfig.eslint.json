@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "*.ts",
+    "src/**/*",
+    "test/**/*",
+    "actions/**/*",
+    "scripts/**/*",
+    "workflows/**/*",
+    "playwright/**/*",
+    "packages/**/*",
+    "apps/**/*",
+    "next.config.ts",
+    "next-env.d.ts"
+  ]
+}
