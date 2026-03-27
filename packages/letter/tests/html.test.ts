@@ -343,6 +343,26 @@ describe('renderHtml', () => {
     expect(html).toContain('Your Organization')
   })
 
+  it('renders org address in letterhead and footer when provided', () => {
+    const dataWithAddress: LetterData = {
+      ...sampleData,
+      orgAddress: '123 Main St, Anytown, ST 12345',
+    }
+
+    const html = renderHtml(dataWithAddress, logoDataUri)
+
+    expect(html).toContain('class="org-address"')
+    expect(html).toContain('123 Main St, Anytown, ST 12345')
+    expect(html).toContain('&middot; 123 Main St')
+  })
+
+  it('omits org address when empty', () => {
+    const html = renderHtml(sampleData, logoDataUri)
+
+    expect(html).not.toContain('class="org-address"')
+    expect(html).not.toContain('&middot;')
+  })
+
   it('includes the date right-aligned', () => {
     const html = renderHtml(sampleData, logoDataUri)
 
@@ -627,6 +647,27 @@ describe('renderHtml', () => {
 })
 
 describe('loadLogoBase64', () => {
+  it('returns a base64 data URI when a logo file exists', async () => {
+    const { writeFile, unlink } = await import('node:fs/promises')
+    const { resolve } = await import('node:path')
+    const tmpLogo = resolve(import.meta.dirname, '..', 'assets', 'logo.png')
+
+    // Create a minimal 1x1 PNG
+    const pngBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB' +
+        'Nl7BcQAAAABJRU5ErkJggg==',
+      'base64',
+    )
+    await writeFile(tmpLogo, pngBytes)
+
+    try {
+      const dataUri = await loadLogoBase64()
+      expect(dataUri).toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]/)
+    } finally {
+      await unlink(tmpLogo)
+    }
+  })
+
   it('returns empty string when no logo file is found', async () => {
     const dataUri = await loadLogoBase64()
 
