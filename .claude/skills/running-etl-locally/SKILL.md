@@ -9,7 +9,7 @@ Guide the user through running the donations ETL locally with an interactive sel
 
 ## Interactive Flow
 
-Use the AskUserQuestion tool to gather all options in a single step:
+Ask the user to gather all options in a single step:
 
 ```
 Ask these questions together:
@@ -107,7 +107,7 @@ bun --version
 
 User: "run the etl locally"
 
-→ Ask questions with AskUserQuestion (all 3 questions at once)
+→ Ask the user all 3 questions at once
 → User selects: Daily, Mercury + PayPal, Full pipeline
 → Run: `bun run apps/runner/src/main.ts daily --sources mercury,paypal`
 → Show output and summarize results

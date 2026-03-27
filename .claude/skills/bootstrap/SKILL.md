@@ -72,6 +72,15 @@ Ask the user for the repository URL if you don't know it.
 bun install
 ```
 
+You may see a warning `.git can't be found` from husky. This is harmless if you
+haven't initialized git yet.
+
+Create `.env.test.local` if it doesn't exist (needed for tests):
+
+```bash
+touch .env.test.local
+```
+
 Verify the installation:
 
 ```bash
@@ -113,7 +122,21 @@ Tell the user:
 Then invoke the `/setup` skill workflow inline (don't literally invoke it - follow the same
 steps described in the setup skill's SKILL.md).
 
-## Step 6: Google Cloud SDK (if deploying)
+## Step 6: Test ETL locally (optional)
+
+Ask: "Would you like to test the ETL locally?"
+
+If yes:
+
+```bash
+dotenvx run -- bun apps/runner/src/main.ts daily
+```
+
+Review the output with the user. Verify that configured sources are fetching data and
+that there are no authentication errors. If a source fails, help debug (wrong API key,
+expired token, etc.).
+
+## Step 7: Google Cloud SDK (if deploying)
 
 Ask: "Do you plan to deploy to GCP?"
 
@@ -157,7 +180,7 @@ If not installed, guide to https://www.docker.com/products/docker-desktop/
 command -v dotenvx || bun add -g @dotenvx/dotenvx
 ```
 
-## Step 7: Provision and deploy (optional)
+## Step 8: Provision and deploy (optional)
 
 Ask: "Would you like to provision GCP infrastructure and deploy now?"
 
@@ -171,16 +194,6 @@ After provisioning, verify:
 
 ```bash
 gcloud run jobs describe donations-etl --region REGION
-```
-
-## Step 8: First run (optional)
-
-Ask: "Would you like to test the ETL locally?"
-
-If yes:
-
-```bash
-dotenvx run -- bun apps/runner/src/main.ts daily
 ```
 
 ## Summary
