@@ -962,4 +962,103 @@ describe('BigQueryClient', () => {
       }
     })
   })
+
+  describe('executeReadOnlyQuery', () => {
+    it('executes a valid SELECT query', async () => {
+      mockQuery.mockResolvedValue([[{ source: 'mercury', total: 5000 }], null])
+
+      const result = await client.executeReadOnlyQuery(
+        'SELECT source, SUM(amount_cents) as total FROM donations.events GROUP BY source',
+      )
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value).toEqual([{ source: 'mercury', total: 5000 }])
+      }
+    })
+
+    it('sets maximumBytesBilled on the query', async () => {
+      mockQuery.mockResolvedValue([[], null])
+
+      await client.executeReadOnlyQuery('SELECT 1', 50 * 1024 * 1024)
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          maximumBytesBilled: String(50 * 1024 * 1024),
+        }),
+      )
+    })
+
+    it('appends LIMIT when not present', async () => {
+      mockQuery.mockResolvedValue([[], null])
+
+      await client.executeReadOnlyQuery('SELECT * FROM donations.events')
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          query: expect.stringContaining('LIMIT 100'),
+        }),
+      )
+    })
+
+    it('preserves existing LIMIT', async () => {
+      mockQuery.mockResolvedValue([[], null])
+
+      await client.executeReadOnlyQuery(
+        'SELECT * FROM donations.events LIMIT 10',
+      )
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          query: expect.stringContaining('LIMIT 10'),
+        }),
+      )
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          query: expect.not.stringContaining('LIMIT 100'),
+        }),
+      )
+    })
+
+    it('rejects non-SELECT statements', async () => {
+      const result = await client.executeReadOnlyQuery(
+        'DROP TABLE donations.events',
+      )
+
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.type).toBe('query')
+        expect(result.error.message).toContain('must start with SELECT')
+      }
+      expect(mockQuery).not.toHaveBeenCalled()
+    })
+
+    it('rejects SQL injection attempts', async () => {
+      const result = await client.executeReadOnlyQuery(
+        'SELECT 1; DROP TABLE donations.events',
+      )
+
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.message).toContain('Forbidden SQL keyword: DROP')
+      }
+      expect(mockQuery).not.toHaveBeenCalled()
+    })
+
+    it('returns error when query execution fails', async () => {
+      mockQuery.mockRejectedValue(new Error('BigQuery error'))
+
+      const result = await client.executeReadOnlyQuery(
+        'SELECT * FROM donations.events',
+      )
+
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.type).toBe('query')
+      }
+    })
+  })
 })

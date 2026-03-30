@@ -1,9 +1,11 @@
 /**
  * Slack Bolt App initialization and command/view registration.
  */
+import { BigQueryClient, generateSql } from '@donations-etl/bq'
 import { App } from '@slack/bolt'
 import type { Logger } from 'pino'
 import type { Config } from '../config'
+import { handleDonationQuery } from './commands/donation-query'
 import { handleDonorLetterCommand } from './commands/donor-letter'
 import { BunReceiver } from './receiver'
 import type { ViewSubmissionArgs } from './views/letter-modal'
@@ -66,6 +68,48 @@ export function createSlackApp(config: Config, logger: Logger) {
 
     await handleLetterModalSubmission(handlerArgs, config, logger)
   })
+
+  // Register app_mention handler for donation queries
+  if (config.AI_GATEWAY_API_KEY) {
+    const bqClient = new BigQueryClient(
+      {
+        projectId: config.PROJECT_ID,
+        datasetRaw: 'donations_raw',
+        datasetCanon: config.DATASET_CANON,
+      },
+      { bucket: '' }, // Not used for queries
+    )
+
+    app.event('app_mention', async ({ event, client }) => {
+      // Strip the bot mention to get the question
+      const question = event.text.replace(/<@[A-Z0-9]+>/g, '').trim()
+
+      if (!question) {
+        await client.chat.postMessage({
+          channel: event.channel,
+          text: 'Ask me a question about donations! For example: "How much did we raise this year?"',
+          thread_ts: event.thread_ts ?? event.ts,
+        })
+        return
+      }
+
+      await handleDonationQuery(
+        question,
+        event.channel,
+        event.thread_ts,
+        event.ts,
+        config,
+        logger,
+        {
+          generateSqlFn: generateSql,
+          bqClient,
+          slackClient: client,
+        },
+      )
+    })
+
+    logger.info('Donation query bot enabled (AI_GATEWAY_API_KEY configured)')
+  }
 
   return { app, receiver }
 }

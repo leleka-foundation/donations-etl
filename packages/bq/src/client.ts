@@ -25,6 +25,7 @@ import {
   generateUpdateRunSql,
   generateUpsertWatermarkSql,
 } from './sql'
+import { ensureLimit, validateReadOnlySql } from './sql-safety'
 import {
   EtlRunSchema,
   ReportRowSchema,
@@ -458,6 +459,33 @@ export class BigQueryClient {
       const validated = z.array(ReportRowSchema).parse(rows)
       return parseReportRows(validated)
     })
+  }
+
+  /**
+   * Execute a read-only SQL query with safety guardrails.
+   *
+   * - Rejects non-SELECT statements (DDL/DML)
+   * - Appends LIMIT if not present
+   * - Caps bytes billed to prevent runaway costs
+   */
+  executeReadOnlyQuery(
+    sql: string,
+    maxBytes: number = 100 * 1024 * 1024, // 100MB default
+  ): ResultAsync<Record<string, unknown>[], BigQueryError> {
+    const validationError = validateReadOnlySql(sql)
+    if (validationError) {
+      return errAsync(createError('query', validationError))
+    }
+
+    const limitedSql = ensureLimit(sql)
+
+    return ResultAsync.fromPromise(
+      this.bq.query({
+        query: limitedSql,
+        maximumBytesBilled: String(maxBytes),
+      }),
+      (error) => createError('query', 'Query execution failed', error),
+    ).map(([rows]) => z.array(z.record(z.string(), z.unknown())).parse(rows))
   }
 
   /**

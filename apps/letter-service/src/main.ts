@@ -49,7 +49,8 @@ async function main(): Promise<void> {
       // Forward Slack requests to the Bolt receiver
       if (
         url.pathname === '/slack/commands' ||
-        url.pathname === '/slack/interactivity'
+        url.pathname === '/slack/interactivity' ||
+        url.pathname === '/slack/events'
       ) {
         const body = await request.text()
         const headers: Record<string, string> = {}

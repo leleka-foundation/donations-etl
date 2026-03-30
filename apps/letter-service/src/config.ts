@@ -24,6 +24,9 @@ export const ConfigSchema = z.object({
   SLACK_BOT_TOKEN: z.string(),
   SLACK_SIGNING_SECRET: z.string(),
 
+  // AI (for donation query bot, optional)
+  AI_GATEWAY_API_KEY: z.string().optional(),
+
   // Organization identity (for letter templates)
   ORG_NAME: z.string().default('Your Organization'),
   ORG_ADDRESS: z.string().default(''),

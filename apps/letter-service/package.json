@@ -4,7 +4,8 @@
   "type": "module",
   "main": "./src/main.ts",
   "dependencies": {
-    "@donations-etl/letter": "workspace:*"
+    "@donations-etl/letter": "workspace:*",
+    "@donations-etl/bq": "workspace:*"
   },
   "peerDependencies": {
     "@slack/bolt": "^4.0.0",
