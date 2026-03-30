@@ -12,7 +12,9 @@ COPY package.json bun.lock ./
 COPY packages/types/package.json packages/types/
 COPY packages/connectors/package.json packages/connectors/
 COPY packages/bq/package.json packages/bq/
+COPY packages/letter/package.json packages/letter/
 COPY apps/runner/package.json apps/runner/
+COPY apps/letter-service/package.json apps/letter-service/
 
 # Install dependencies
 RUN bun install --frozen-lockfile

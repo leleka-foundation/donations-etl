@@ -409,6 +409,9 @@ export class Orchestrator {
       }))
     }
 
+    // Track which sources actually have data to load
+    const sourcesWithData: Source[] = []
+
     // Process each source sequentially
     const processSource = (
       index: number,
@@ -421,6 +424,9 @@ export class Orchestrator {
         (metrics) => {
           sourceMetrics[source] = metrics
           totalCount += metrics.count
+          if (metrics.count > 0) {
+            sourcesWithData.push(source)
+          }
           return processSource(index + 1)
         },
       )
@@ -435,10 +441,18 @@ export class Orchestrator {
         { runId },
         'Running skip-merge mode, loading to staging only',
       )
-      pipeline = pipeline.andThen(() => this.loadToStaging(runId, sources))
+      pipeline = pipeline.andThen(() =>
+        sourcesWithData.length > 0
+          ? this.loadToStaging(runId, sourcesWithData)
+          : okAsync(undefined),
+      )
     } else {
       // Full pipeline: load and merge
-      pipeline = pipeline.andThen(() => this.loadAndMerge(runId, sources))
+      pipeline = pipeline.andThen(() =>
+        sourcesWithData.length > 0
+          ? this.loadAndMerge(runId, sourcesWithData)
+          : okAsync(undefined),
+      )
     }
 
     // Update watermarks (we extracted data, so update regardless of merge)

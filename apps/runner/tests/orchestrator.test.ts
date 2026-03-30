@@ -252,6 +252,9 @@ describe('Orchestrator', () => {
       expect(result.isOk()).toBe(true)
       expect(result._unsafeUnwrap().status).toBe('succeeded')
       expect(result._unsafeUnwrap().mode).toBe('daily')
+      // Should skip load and merge when no sources have data
+      expect(mockBqClient.loadFromGcs).not.toHaveBeenCalled()
+      expect(mockBqClient.merge).not.toHaveBeenCalled()
     })
 
     it('runs daily ETL for specific sources', async () => {
@@ -397,6 +400,33 @@ describe('Orchestrator', () => {
     })
 
     it('returns error when merge fails', async () => {
+      mockMercuryConnector.fetchAll.mockReturnValue(
+        okAsync([
+          {
+            source: 'mercury',
+            external_id: 'txn-123',
+            event_ts: '2024-01-15T10:00:00Z',
+            created_at: '2024-01-15T10:00:00Z',
+            ingested_at: '2024-01-15T10:05:00Z',
+            amount_cents: 10000,
+            fee_cents: 0,
+            net_amount_cents: 10000,
+            currency: 'USD',
+            donor_name: 'John Doe',
+            payer_name: null,
+            donor_email: 'john@example.com',
+            donor_phone: null,
+            donor_address: null,
+            status: 'succeeded',
+            payment_method: 'ach',
+            description: 'Test donation',
+            attribution: null,
+            attribution_human: null,
+            source_metadata: {},
+            run_id: '00000000-0000-0000-0000-000000000001',
+          },
+        ]),
+      )
       mockBqClient.merge.mockReturnValue(
         errAsync({ type: 'query', message: 'Merge failed' }),
       )
@@ -619,6 +649,19 @@ describe('Orchestrator', () => {
         expect(mockBqClient.merge).not.toHaveBeenCalled()
         // Should still update watermarks
         expect(mockBqClient.updateWatermark).toHaveBeenCalled()
+      })
+
+      it('skips load when skipMerge is true and no sources have data', async () => {
+        const orchestrator = new Orchestrator(config, logger)
+
+        const result = await orchestrator.runDaily({
+          sources: ['mercury'],
+          skipMerge: true,
+        })
+
+        expect(result.isOk()).toBe(true)
+        expect(mockBqClient.loadFromGcs).not.toHaveBeenCalled()
+        expect(mockBqClient.merge).not.toHaveBeenCalled()
       })
 
       it('skips extraction when mergeOnly is true', async () => {
