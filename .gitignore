@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 Checks.csv
 data
+
+# skill eval workspaces (generated artifacts)
+*-workspace/
