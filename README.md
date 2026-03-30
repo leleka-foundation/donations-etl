@@ -4,9 +4,18 @@
 
 A US non-profit may accept donation via a large number of methods: checks, ACH, PayPal, fundraising platforms such as Givebutter, Zeffy, etc., emplyee matching platforms, and so on. Collecting all donation records in a single place (for reporting, CRM, and other workflows) is annoying. I have not found reliable SaaS ETL solutions that supported all, or even most, of the methods my non-profit uses. Hence this project.
 
-This is a configurable and extensible open-source ETL tool for nonprofit donation management. Extracts donation data from multiple payment platforms and fundraising tools, and loads it into Google BigQuery. There is also a utility to generate donor confirmation letters from Slack, which is a common use case for us.
+This is not ready-to-install software. Rather, it's a toolkit for AI coding assistants to setup ETL and other tools for non-profits. After you fork and clone it, don't run scripts or edit configuration files. Instead, start the AI assistant of your choice (I use mostly Claude Code) and talk to it. The toolkit comes with a skill (`setup`) for setting it up and customizing it.
 
-It's unlikely that this will be useful to you out of the box. The way to use it it to start `claude`, `codex`, or the AI dev tool of your choice, and ask the tool to build it, configure it for your needs, and deploy it.
+The core functionality is ETL: getting data from donation sources into a BigQuery table. The supported sources are listed below and there is a skill (`create-connector`) for adding connectors to additional sources. If you'd like a different destination than BigQuery, talk to your assistant.
+
+There are skills for running ETL locally and for setting this up to run on GCP and load data daily. If you'd like a different deployment, talk to your assistant.
+
+There are also skills for querying donation data in the destination table, and some additional, optional tools:
+
+- a donor thank you letter formatter, callable from Slack
+- a weekly and monthly donation report generator, published to Slack
+
+If you'd like different formats, different destinations, or additional tools - talk to your LLM. Many things become simple once your donation data is all in one place.
 
 **Built with AI** -- This codebase was primarily written by [Claude Code](https://claude.com/claude-code) and [Codex](https://openai.com/index/codex/).
 

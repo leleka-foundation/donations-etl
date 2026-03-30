@@ -34,6 +34,10 @@ export const ConfigSchema = z.object({
   // Wise (balanceId not needed - connector auto-discovers all balances)
   WISE_TOKEN: z.string().optional(),
   WISE_PROFILE_ID: z.coerce.number().int().positive().optional(),
+
+  // Slack (for reports)
+  SLACK_BOT_TOKEN: z.string().optional(),
+  REPORT_SLACK_CHANNEL: z.string().optional(),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

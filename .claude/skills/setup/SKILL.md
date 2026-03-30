@@ -223,7 +223,34 @@ If no:
 - Tell the user: "Slack integration skipped. You can still generate letters via the REST API or the /donor-letter Claude skill."
 - Set a placeholder for `LETTER_SERVICE_API_KEY` if they want the REST API
 
-## Step 7: Install Dependencies (if not already done)
+## Step 7: Donation Reports (Optional)
+
+Ask: "Do you want to enable automated donation reports to Slack? These send weekly and monthly
+summaries (totals, breakdowns by source, campaign, and amount range) to a Slack channel."
+
+If yes:
+
+1. The Slack bot token from Step 6 is reused. If Step 6 was skipped, the user needs a
+   `SLACK_BOT_TOKEN` — guide them through creating a Slack app (same instructions as Step 6,
+   but only the `chat:write` scope is needed for reports).
+2. Ask for the Slack channel ID where reports should be posted:
+   - Guide: Right-click the channel in Slack > "View channel details" > Channel ID at bottom
+   - The bot must be invited to the channel (`/invite @BotName`)
+3. Ask for schedule preferences:
+   - Weekly: which day and time? (default: Monday 8 AM)
+   - Monthly: which day and time? (default: 1st of month 8 AM)
+   - Which timezone? (default: America/New_York)
+4. Update `.env`:
+   - `REPORT_SLACK_CHANNEL` — the channel ID
+   - `REPORT_WEEKLY_SCHEDULE` — cron expression (e.g., `0 8 * * 1` for Monday 8 AM)
+   - `REPORT_MONTHLY_SCHEDULE` — cron expression (e.g., `0 8 1 * *` for 1st of month 8 AM)
+
+If no:
+
+- Tell the user: "Reports skipped. You can enable them later by setting `REPORT_SLACK_CHANNEL`
+  in `.env` and re-running `/provision`."
+
+## Step 8: Install Dependencies (if not already done)
 
 If dependencies haven't been installed yet (e.g., running `/setup` standalone without
 `/bootstrap`):
@@ -232,7 +259,7 @@ If dependencies haven't been installed yet (e.g., running `/setup` standalone wi
 bun install
 ```
 
-## Step 8: Verify Configuration
+## Step 9: Verify Configuration
 
 Run a quick check:
 
@@ -244,7 +271,7 @@ bun test:run
 
 Report results to the user. If tests fail, help debug.
 
-## Step 9: Provision GCP Infrastructure (Optional)
+## Step 10: Provision GCP Infrastructure (Optional)
 
 Ask: "Would you like to provision GCP infrastructure now?"
 
@@ -263,7 +290,7 @@ If no:
 - Tell the user they can run `dotenvx run -- ./infra/provision.sh` later
 - Or use the `/provision` skill
 
-## Step 10: Summary
+## Step 11: Summary
 
 Print a summary of what was configured:
 
@@ -272,6 +299,7 @@ Print a summary of what was configured:
 - Enabled sources: list which sources have credentials
 - Slack: enabled/disabled
 - Letter service: configured/not configured
+- Reports: enabled/disabled (if enabled, show channel and schedules)
 
 Suggest next steps:
 

@@ -180,8 +180,35 @@ This script is idempotent and will:
 - Build and push Docker image
 - Create Cloud Run job
 - Set up Cloud Scheduler for daily runs
+- Set up Cloud Scheduler for weekly/monthly reports (if `REPORT_SLACK_CHANNEL` is set)
 
-### Step 7: Post-Provisioning Verification
+### Step 7: Donation Reports Setup (Optional)
+
+After provisioning, ask: "Do you want to enable weekly and monthly donation reports to Slack?"
+
+If yes:
+
+1. If `REPORT_SLACK_CHANNEL` is not set in `.env`, ask the user for the Slack channel ID
+   (right-click channel > View channel details > Channel ID at bottom) and update `.env`.
+2. Ensure `SLACK_BOT_TOKEN` is in Secret Manager (provisioning handles this if set in `.env`).
+   The bot must be invited to the target channel.
+3. Verify the report scheduler jobs were created:
+   ```bash
+   gcloud scheduler jobs list --location ${REGION} | grep report
+   ```
+4. If the scheduler jobs don't exist (e.g., `REPORT_SLACK_CHANNEL` was added after provisioning),
+   re-run provisioning or create them manually:
+   ```bash
+   dotenvx run -- ./infra/provision.sh
+   ```
+5. Optionally adjust the schedule and timezone by updating `.env`:
+   - `REPORT_WEEKLY_SCHEDULE` (default: `0 8 * * 1` — Monday 8 AM)
+   - `REPORT_MONTHLY_SCHEDULE` (default: `0 8 1 * *` — 1st of month 8 AM)
+   - The timezone is set during scheduler job creation via `TIME_ZONE` in `.env`
+
+If no: skip. Reports can be enabled later by setting `REPORT_SLACK_CHANNEL` and re-provisioning.
+
+### Step 8: Post-Provisioning Verification
 
 After provisioning completes:
 

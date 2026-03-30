@@ -24,6 +24,7 @@ import { parseCli } from './cli'
 import { loadConfig } from './config'
 import { createLogger } from './logger'
 import { Orchestrator } from './orchestrator'
+import { runReport } from './report'
 
 /**
  * Run the ETL based on CLI command.
@@ -118,6 +119,18 @@ async function main(): Promise<void> {
       }
 
       logger.info('Health check passed')
+      break
+    }
+
+    case 'report': {
+      const result = await runReport(config, command.options.period, logger)
+
+      if (result.isErr()) {
+        logger.error({ error: result.error }, 'Report generation failed')
+        process.exit(1)
+      }
+
+      logger.info({ period: command.options.period }, 'Report sent to Slack')
       break
     }
   }

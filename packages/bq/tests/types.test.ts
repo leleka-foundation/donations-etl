@@ -2,13 +2,16 @@
  * Tests for BigQuery types and schemas.
  */
 import { describe, expect, it } from 'vitest'
+import type { ReportRow } from '../src/types'
 import {
   EtlMetricsSchema,
   EtlModeSchema,
   EtlRunSchema,
   EtlStatusSchema,
+  ReportRowSchema,
   SourceMetricsSchema,
   WatermarkSchema,
+  parseReportRows,
 } from '../src/types'
 
 describe('EtlModeSchema', () => {
@@ -244,5 +247,191 @@ describe('WatermarkSchema', () => {
         updated_at: '2024-01-15T01:00:00Z',
       }),
     ).toThrow()
+  })
+})
+
+describe('ReportRowSchema', () => {
+  it('parses a valid total row', () => {
+    const row = ReportRowSchema.parse({
+      section: 'total',
+      label: 'total',
+      total_cents: '1234500',
+      count: '42',
+      non_usd_excluded: '3',
+    })
+    expect(row.section).toBe('total')
+    expect(row.total_cents).toBe(1234500)
+    expect(row.count).toBe(42)
+    expect(row.non_usd_excluded).toBe(3)
+  })
+
+  it('parses a valid by_source row', () => {
+    const row = ReportRowSchema.parse({
+      section: 'by_source',
+      label: 'mercury',
+      total_cents: 500000,
+      count: 10,
+      non_usd_excluded: 0,
+    })
+    expect(row.section).toBe('by_source')
+    expect(row.label).toBe('mercury')
+  })
+
+  it('parses a valid by_campaign row', () => {
+    const row = ReportRowSchema.parse({
+      section: 'by_campaign',
+      label: 'Spring Drive',
+      total_cents: 800000,
+      count: 25,
+      non_usd_excluded: 0,
+    })
+    expect(row.label).toBe('Spring Drive')
+  })
+
+  it('parses a valid by_amount_range row', () => {
+    const row = ReportRowSchema.parse({
+      section: 'by_amount_range',
+      label: '$0 - $100',
+      total_cents: 150000,
+      count: 25,
+      non_usd_excluded: 0,
+    })
+    expect(row.label).toBe('$0 - $100')
+  })
+
+  it('coerces string numbers to numbers', () => {
+    const row = ReportRowSchema.parse({
+      section: 'total',
+      label: 'total',
+      total_cents: '999',
+      count: '5',
+      non_usd_excluded: '0',
+    })
+    expect(row.total_cents).toBe(999)
+    expect(row.count).toBe(5)
+  })
+
+  it('rejects invalid section', () => {
+    expect(() =>
+      ReportRowSchema.parse({
+        section: 'invalid',
+        label: 'x',
+        total_cents: 0,
+        count: 0,
+        non_usd_excluded: 0,
+      }),
+    ).toThrow()
+  })
+})
+
+describe('parseReportRows', () => {
+  const rows: ReportRow[] = [
+    {
+      section: 'total',
+      label: 'total',
+      total_cents: 1500000,
+      count: 42,
+      non_usd_excluded: 3,
+    },
+    {
+      section: 'by_source',
+      label: 'mercury',
+      total_cents: 500000,
+      count: 10,
+      non_usd_excluded: 0,
+    },
+    {
+      section: 'by_source',
+      label: 'paypal',
+      total_cents: 1000000,
+      count: 32,
+      non_usd_excluded: 0,
+    },
+    {
+      section: 'by_campaign',
+      label: 'Spring Drive',
+      total_cents: 800000,
+      count: 25,
+      non_usd_excluded: 0,
+    },
+    {
+      section: 'by_campaign',
+      label: 'Unattributed',
+      total_cents: 700000,
+      count: 17,
+      non_usd_excluded: 0,
+    },
+    {
+      section: 'by_amount_range',
+      label: '$0 - $100',
+      total_cents: 150000,
+      count: 25,
+      non_usd_excluded: 0,
+    },
+    {
+      section: 'by_amount_range',
+      label: '$100 - $500',
+      total_cents: 300000,
+      count: 10,
+      non_usd_excluded: 0,
+    },
+  ]
+
+  it('parses total section', () => {
+    const data = parseReportRows(rows)
+    expect(data.total.totalCents).toBe(1500000)
+    expect(data.total.count).toBe(42)
+    expect(data.total.nonUsdExcluded).toBe(3)
+  })
+
+  it('parses by_source section', () => {
+    const data = parseReportRows(rows)
+    expect(data.bySource).toHaveLength(2)
+    expect(data.bySource[0]).toEqual({
+      label: 'mercury',
+      totalCents: 500000,
+      count: 10,
+    })
+    expect(data.bySource[1]).toEqual({
+      label: 'paypal',
+      totalCents: 1000000,
+      count: 32,
+    })
+  })
+
+  it('parses by_campaign section', () => {
+    const data = parseReportRows(rows)
+    expect(data.byCampaign).toHaveLength(2)
+    expect(data.byCampaign[0]?.label).toBe('Spring Drive')
+  })
+
+  it('parses by_amount_range section', () => {
+    const data = parseReportRows(rows)
+    expect(data.byAmountRange).toHaveLength(2)
+    expect(data.byAmountRange[0]?.label).toBe('$0 - $100')
+  })
+
+  it('handles empty rows', () => {
+    const data = parseReportRows([])
+    expect(data.total.totalCents).toBe(0)
+    expect(data.total.count).toBe(0)
+    expect(data.total.nonUsdExcluded).toBe(0)
+    expect(data.bySource).toEqual([])
+    expect(data.byCampaign).toEqual([])
+    expect(data.byAmountRange).toEqual([])
+  })
+
+  it('handles rows with only total', () => {
+    const data = parseReportRows([
+      {
+        section: 'total',
+        label: 'total',
+        total_cents: 0,
+        count: 0,
+        non_usd_excluded: 0,
+      },
+    ])
+    expect(data.total.count).toBe(0)
+    expect(data.bySource).toEqual([])
   })
 })

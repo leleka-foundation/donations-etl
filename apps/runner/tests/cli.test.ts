@@ -8,6 +8,7 @@ import {
   DailyOptionsSchema,
   noop,
   parseCli,
+  ReportOptionsSchema,
 } from '../src/cli'
 
 describe('noop', () => {
@@ -609,6 +610,61 @@ describe('parseCli', () => {
 
       expect(result.isErr()).toBe(true)
       expect(result._unsafeUnwrapErr().type).toBe('parse')
+    })
+  })
+
+  describe('report command', () => {
+    it('parses report --period weekly', () => {
+      const result = parseCli(['report', '--period', 'weekly'])
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.command).toBe('report')
+        if (result.value.command === 'report') {
+          expect(result.value.options.period).toBe('weekly')
+        }
+      }
+    })
+
+    it('parses report --period monthly', () => {
+      const result = parseCli(['report', '--period', 'monthly'])
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk() && result.value.command === 'report') {
+        expect(result.value.options.period).toBe('monthly')
+      }
+    })
+
+    it('returns error for invalid period', () => {
+      const result = parseCli(['report', '--period', 'yearly'])
+
+      expect(result.isErr()).toBe(true)
+      expect(result._unsafeUnwrapErr().type).toBe('validation')
+    })
+
+    it('returns error when period is missing', () => {
+      const result = parseCli(['report'])
+
+      expect(result.isErr()).toBe(true)
+      expect(result._unsafeUnwrapErr().type).toBe('parse')
+    })
+  })
+
+  describe('ReportOptionsSchema', () => {
+    it('accepts weekly', () => {
+      expect(ReportOptionsSchema.parse({ period: 'weekly' }).period).toBe(
+        'weekly',
+      )
+    })
+
+    it('accepts monthly', () => {
+      expect(ReportOptionsSchema.parse({ period: 'monthly' }).period).toBe(
+        'monthly',
+      )
+    })
+
+    it('rejects invalid period', () => {
+      expect(() => ReportOptionsSchema.parse({ period: 'yearly' })).toThrow()
     })
   })
 })
