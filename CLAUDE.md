@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code and other coding agents when working with code in this repository.
+This is a toolkit for AI coding assistants to set up and manage donation ETL for US nonprofits. Users talk to you instead of editing config files or running scripts directly. You help them set up data sources, deploy infrastructure, query donation data, generate donor letters, and build new features. Start with the `setup` skill for new users. See `.claude/skills/` for available skills.
 
 ## How You Must Work
 
@@ -25,7 +25,7 @@ Do not skip this. Do not compress it into "the user wants X, let me do X." If yo
 
 ## Project Overview
 
-A configurable open-source ETL tool for nonprofit donation management, built with Bun and TypeScript. Extracts donations from multiple payment platforms, transforms and loads them into BigQuery, and generates donor confirmation letters.
+A toolkit for nonprofit donation management: ETL from multiple payment platforms (Mercury, PayPal, Wise, Givebutter, Venmo, Funraise, Google Sheets) into BigQuery, plus donor confirmation letters and Slack-published reports. Built with Bun and TypeScript. Designed to be forked and customized via AI assistant conversation.
 
 See files in [docs/](docs/) for product specs and requirements.
 
