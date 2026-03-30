@@ -4,6 +4,7 @@
  * Translates user questions about donations into BigQuery SQL
  * using an LLM via the Vercel AI Gateway.
  */
+import { createVertex } from '@ai-sdk/google-vertex'
 import { generateText, Output } from 'ai'
 import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 import { z } from 'zod'
@@ -36,7 +37,7 @@ export type SqlResponse = z.infer<typeof SqlResponseSchema>
 /**
  * Default model for SQL generation.
  */
-export const DEFAULT_MODEL = 'google/gemini-2.5-flash'
+export const DEFAULT_MODEL = 'gemini-2.5-flash'
 
 /**
  * Build the system prompt with table schema and rules.
@@ -106,17 +107,24 @@ SQL: SELECT ROUND(AVG(amount_cents) / 100, 2) AS avg_dollars, ROUND(STDDEV(amoun
 
 /**
  * Generate SQL from a natural language question.
+ *
+ * Uses Google Vertex AI with Application Default Credentials.
+ * No API key needed — uses the same GCP auth as BigQuery.
  */
 export function generateSql(
   question: string,
   config: BigQueryConfig,
   options?: { model?: string },
 ): ResultAsync<SqlResponse, NL2SqlError> {
-  const model = options?.model ?? DEFAULT_MODEL
+  const modelName = options?.model ?? DEFAULT_MODEL
+  const vertex = createVertex({
+    project: config.projectId,
+    location: 'us-central1',
+  })
 
   return ResultAsync.fromPromise(
     generateText({
-      model,
+      model: vertex(modelName),
       output: Output.object({ schema: SqlResponseSchema }),
       system: buildSystemPrompt(config),
       prompt: question,

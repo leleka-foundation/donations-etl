@@ -262,16 +262,18 @@ If yes:
    - Go to the Slack app settings > OAuth & Permissions > add `app_mentions:read` scope
    - Go to Event Subscriptions > enable and subscribe to the `app_mention` bot event
    - Set the Request URL to `https://<letter-service-url>/slack/events`
-2. Get a Vercel AI Gateway API key:
-   - Go to https://vercel.com/dashboard/ai-gateway/api-keys
-   - Create a new API key
-3. Ask for `AI_GATEWAY_API_KEY`
-4. Update `.env`
+2. No additional API keys needed — the bot uses Google Vertex AI with the same GCP
+   credentials as BigQuery. The Vertex AI API must be enabled in the project (provisioning
+   handles this).
+3. Ensure the GCP project has the Vertex AI API enabled:
+   ```bash
+   gcloud services enable aiplatform.googleapis.com
+   ```
 
 If no:
 
-- Tell the user: "Query bot skipped. You can enable it later by setting `AI_GATEWAY_API_KEY`
-  in `.env`. The bot activates automatically when this key is present."
+- Tell the user: "Query bot skipped. The `app_mention` handler is always registered in the
+  letter service. To enable it, configure Event Subscriptions in the Slack app settings."
 
 ## Step 9: Install Dependencies (if not already done)
 

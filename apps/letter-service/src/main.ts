@@ -9,6 +9,7 @@
  * - POST /slack/interactivity — Slack modal submissions
  */
 import { closeBrowser, launchBrowser } from '@donations-etl/letter'
+import { z } from 'zod'
 import { loadConfig } from './config'
 import { createLogger } from './logger'
 import { route } from './router'
@@ -53,6 +54,27 @@ async function main(): Promise<void> {
         url.pathname === '/slack/events'
       ) {
         const body = await request.text()
+
+        // Handle Slack url_verification challenge directly
+        if (url.pathname === '/slack/events') {
+          try {
+            const ChallengeSchema = z.object({
+              type: z.literal('url_verification'),
+              challenge: z.string(),
+            })
+            const challenge = ChallengeSchema.parse(JSON.parse(body))
+            return new Response(
+              JSON.stringify({ challenge: challenge.challenge }),
+              {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            )
+          } catch {
+            // Not a challenge — fall through to Bolt
+          }
+        }
+
         const headers: Record<string, string> = {}
         request.headers.forEach((value, key) => {
           headers[key] = value

@@ -37,7 +37,6 @@ describe('handleDonationQuery', () => {
       ORG_TAX_STATUS: 'Test tax',
       DEFAULT_SIGNER_NAME: 'Test Signer',
       DEFAULT_SIGNER_TITLE: 'Director',
-      AI_GATEWAY_API_KEY: 'test-ai-key',
     }
 
     deps = {

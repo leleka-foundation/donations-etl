@@ -55,7 +55,6 @@ export { ensureLimit, validateReadOnlySql } from './sql-safety'
 
 // NL2SQL
 export {
-  DEFAULT_MODEL,
   SqlResponseSchema,
   buildSystemPrompt,
   generateSql,

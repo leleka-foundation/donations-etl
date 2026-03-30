@@ -214,14 +214,13 @@ Ask: "Do you want to enable a Slack bot that answers natural language questions 
 
 If yes:
 
-1. The bot needs an AI Gateway API key for LLM-powered SQL generation:
-   - Guide: Go to https://vercel.com/dashboard/ai-gateway/api-keys and create an API key
-2. Ask for `AI_GATEWAY_API_KEY` and update `.env`
-3. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
+1. No additional API keys needed — the bot uses Google Vertex AI with the same GCP auth
+   as BigQuery.
+2. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
    - Go to Slack app settings > OAuth & Permissions > add `app_mentions:read`
    - Go to Event Subscriptions > enable > subscribe to `app_mention` bot event
    - Set Request URL to `https://<letter-service-url>/slack/events`
-4. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
+3. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
    with only `bigquery.dataViewer` and `bigquery.jobUser` permissions
 
 If no: skip. The query bot activates automatically when `AI_GATEWAY_API_KEY` is set.

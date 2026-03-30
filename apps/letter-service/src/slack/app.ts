@@ -70,7 +70,7 @@ export function createSlackApp(config: Config, logger: Logger) {
   })
 
   // Register app_mention handler for donation queries
-  if (config.AI_GATEWAY_API_KEY) {
+  {
     const bqClient = new BigQueryClient(
       {
         projectId: config.PROJECT_ID,
@@ -108,7 +108,7 @@ export function createSlackApp(config: Config, logger: Logger) {
       )
     })
 
-    logger.info('Donation query bot enabled (AI_GATEWAY_API_KEY configured)')
+    logger.info('Donation query bot enabled')
   }
 
   return { app, receiver }

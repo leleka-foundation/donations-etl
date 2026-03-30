@@ -153,11 +153,12 @@ ensure_sa_role_on_sa() {
 ensure_iam() {
   log "Ensuring IAM bindings..."
 
-  # Runtime SA: BigQuery jobs + edit data, read secrets, write to bucket
+  # Runtime SA: BigQuery jobs + edit data, read secrets, write to bucket, Vertex AI
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/bigquery.jobUser"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/bigquery.dataEditor"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/secretmanager.secretAccessor"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/storage.objectAdmin"
+  ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/aiplatform.user"
 
   # Query SA: read-only BigQuery access (for donation query bot)
   ensure_project_role "serviceAccount:${QUERY_SA_EMAIL}" "roles/bigquery.jobUser"
