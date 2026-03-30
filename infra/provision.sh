@@ -45,7 +45,8 @@ CHECK_DEPOSITS_SPREADSHEET_ID="${CHECK_DEPOSITS_SPREADSHEET_ID:-}"
 # Wise API settings
 WISE_PROFILE_ID="${WISE_PROFILE_ID:-}"
 
-# Donation reports (optional)
+# Slack and donation reports (optional)
+SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
 REPORT_SLACK_CHANNEL="${REPORT_SLACK_CHANNEL:-}"
 
 SKIP_BUILD="${SKIP_BUILD:-0}"
@@ -215,6 +216,11 @@ ensure_secrets() {
   # Optional: Wise
   if [ -n "${SECRET_WISE_TOKEN:-}" ]; then
     ensure_secret "WISE_TOKEN" "SECRET_WISE_TOKEN"
+  fi
+
+  # Optional: Slack Bot Token (for reports and letter service)
+  if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+    ensure_secret "SLACK_BOT_TOKEN" "SLACK_BOT_TOKEN"
   fi
 }
 
