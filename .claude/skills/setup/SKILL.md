@@ -250,7 +250,30 @@ If no:
 - Tell the user: "Reports skipped. You can enable them later by setting `REPORT_SLACK_CHANNEL`
   in `.env` and re-running `/provision`."
 
-## Step 8: Install Dependencies (if not already done)
+## Step 8: Donation Query Bot (Optional)
+
+Ask: "Do you want to enable a Slack bot that answers natural language questions about donations?
+Users can @mention the bot in any channel and ask questions like 'How much did we raise this
+year?' or 'Who are our top donors?'"
+
+If yes:
+
+1. The Slack bot token from Step 6 is reused. The bot also needs the `app_mentions:read` scope:
+   - Go to the Slack app settings > OAuth & Permissions > add `app_mentions:read` scope
+   - Go to Event Subscriptions > enable and subscribe to the `app_mention` bot event
+   - Set the Request URL to `https://<letter-service-url>/slack/events`
+2. Get a Vercel AI Gateway API key:
+   - Go to https://vercel.com/dashboard/ai-gateway/api-keys
+   - Create a new API key
+3. Ask for `AI_GATEWAY_API_KEY`
+4. Update `.env`
+
+If no:
+
+- Tell the user: "Query bot skipped. You can enable it later by setting `AI_GATEWAY_API_KEY`
+  in `.env`. The bot activates automatically when this key is present."
+
+## Step 9: Install Dependencies (if not already done)
 
 If dependencies haven't been installed yet (e.g., running `/setup` standalone without
 `/bootstrap`):
@@ -259,7 +282,7 @@ If dependencies haven't been installed yet (e.g., running `/setup` standalone wi
 bun install
 ```
 
-## Step 9: Verify Configuration
+## Step 10: Verify Configuration
 
 Run a quick check:
 
@@ -271,7 +294,7 @@ bun test:run
 
 Report results to the user. If tests fail, help debug.
 
-## Step 10: Provision GCP Infrastructure (Optional)
+## Step 11: Provision GCP Infrastructure (Optional)
 
 Ask: "Would you like to provision GCP infrastructure now?"
 
@@ -290,7 +313,7 @@ If no:
 - Tell the user they can run `dotenvx run -- ./infra/provision.sh` later
 - Or use the `/provision` skill
 
-## Step 11: Summary
+## Step 12: Summary
 
 Print a summary of what was configured:
 
@@ -300,6 +323,7 @@ Print a summary of what was configured:
 - Slack: enabled/disabled
 - Letter service: configured/not configured
 - Reports: enabled/disabled (if enabled, show channel and schedules)
+- Query bot: enabled/disabled
 
 Suggest next steps:
 
