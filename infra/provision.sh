@@ -282,6 +282,11 @@ ensure_cloud_run_job() {
     env_vars="${env_vars},WISE_PROFILE_ID=${WISE_PROFILE_ID}"
   fi
 
+  # Add report Slack channel if configured
+  if [ -n "${REPORT_SLACK_CHANNEL}" ]; then
+    env_vars="${env_vars},REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL}"
+  fi
+
   local secrets
   secrets="MERCURY_API_KEY=MERCURY_API_KEY:latest,PAYPAL_CLIENT_ID=PAYPAL_CLIENT_ID:latest,PAYPAL_SECRET=PAYPAL_SECRET:latest"
 
@@ -293,6 +298,11 @@ ensure_cloud_run_job() {
   # Add Wise if secret exists
   if gcloud secrets describe "WISE_TOKEN" >/dev/null 2>&1; then
     secrets="${secrets},WISE_TOKEN=WISE_TOKEN:latest"
+  fi
+
+  # Add Slack bot token if secret exists (for reports)
+  if gcloud secrets describe "SLACK_BOT_TOKEN" >/dev/null 2>&1; then
+    secrets="${secrets},SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest"
   fi
 
   if gcloud run jobs describe "${JOB_NAME}" --region "${REGION}" >/dev/null 2>&1; then
@@ -359,6 +369,83 @@ ensure_scheduler_job() {
   fi
 }
 
+ensure_report_scheduler_jobs() {
+  if [ "${SKIP_SCHEDULER}" = "1" ]; then
+    log "SKIP_SCHEDULER=1; skipping report schedulers."
+    return
+  fi
+
+  if [ -z "${REPORT_SLACK_CHANNEL}" ]; then
+    log "REPORT_SLACK_CHANNEL not set; skipping report schedulers."
+    return
+  fi
+
+  local weekly_name="${JOB_NAME}-report-weekly"
+  local monthly_name="${JOB_NAME}-report-monthly"
+  local weekly_schedule="${REPORT_WEEKLY_SCHEDULE:-0 8 * * 1}"
+  local monthly_schedule="${REPORT_MONTHLY_SCHEDULE:-0 8 1 * *}"
+
+  # Weekly report scheduler
+  local weekly_body='{"overrides":{"containerOverrides":[{"args":["bun","dist/apps/runner/main.js","report","--period","weekly"]}]}}'
+
+  log "Ensuring weekly report scheduler: ${weekly_name}"
+  if gcloud scheduler jobs describe "${weekly_name}" --location "${REGION}" >/dev/null 2>&1; then
+    gcloud scheduler jobs update http "${weekly_name}" \
+      --location "${REGION}" \
+      --schedule "${weekly_schedule}" \
+      --time-zone "${TIME_ZONE}" \
+      --uri "${RUN_URL}" \
+      --http-method POST \
+      --message-body "${weekly_body}" \
+      --oauth-service-account-email "${SCHEDULER_SA_EMAIL}" \
+      --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+      --headers "Content-Type=application/json" >/dev/null
+    log "Weekly report scheduler updated."
+  else
+    gcloud scheduler jobs create http "${weekly_name}" \
+      --location "${REGION}" \
+      --schedule "${weekly_schedule}" \
+      --time-zone "${TIME_ZONE}" \
+      --uri "${RUN_URL}" \
+      --http-method POST \
+      --message-body "${weekly_body}" \
+      --oauth-service-account-email "${SCHEDULER_SA_EMAIL}" \
+      --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+      --headers "Content-Type=application/json" >/dev/null
+    log "Weekly report scheduler created."
+  fi
+
+  # Monthly report scheduler
+  local monthly_body='{"overrides":{"containerOverrides":[{"args":["bun","dist/apps/runner/main.js","report","--period","monthly"]}]}}'
+
+  log "Ensuring monthly report scheduler: ${monthly_name}"
+  if gcloud scheduler jobs describe "${monthly_name}" --location "${REGION}" >/dev/null 2>&1; then
+    gcloud scheduler jobs update http "${monthly_name}" \
+      --location "${REGION}" \
+      --schedule "${monthly_schedule}" \
+      --time-zone "${TIME_ZONE}" \
+      --uri "${RUN_URL}" \
+      --http-method POST \
+      --message-body "${monthly_body}" \
+      --oauth-service-account-email "${SCHEDULER_SA_EMAIL}" \
+      --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+      --headers "Content-Type=application/json" >/dev/null
+    log "Monthly report scheduler updated."
+  else
+    gcloud scheduler jobs create http "${monthly_name}" \
+      --location "${REGION}" \
+      --schedule "${monthly_schedule}" \
+      --time-zone "${TIME_ZONE}" \
+      --uri "${RUN_URL}" \
+      --http-method POST \
+      --message-body "${monthly_body}" \
+      --oauth-service-account-email "${SCHEDULER_SA_EMAIL}" \
+      --oauth-token-scope "https://www.googleapis.com/auth/cloud-platform" \
+      --headers "Content-Type=application/json" >/dev/null
+    log "Monthly report scheduler created."
+  fi
+}
+
 main() {
   need_cmd gcloud
   need_cmd bq
@@ -383,6 +470,7 @@ main() {
 
   ensure_cloud_run_job
   ensure_scheduler_job
+  ensure_report_scheduler_jobs
 
   log "Provisioning complete."
   log "Next commands:"

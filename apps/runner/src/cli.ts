@@ -139,12 +139,22 @@ export const BackfillOptionsSchema = z
 export type BackfillOptions = z.infer<typeof BackfillOptionsSchema>
 
 /**
+ * Report options schema.
+ */
+export const ReportOptionsSchema = z.object({
+  period: z.enum(['weekly', 'monthly']),
+})
+
+export type ReportOptions = z.infer<typeof ReportOptionsSchema>
+
+/**
  * Parsed CLI result.
  */
 export type CliCommand =
   | { command: 'daily'; options: DailyOptions }
   | { command: 'backfill'; options: BackfillOptions }
   | { command: 'health' }
+  | { command: 'report'; options: ReportOptions }
 
 /**
  * Noop action handler - Commander requires an action but we handle commands manually in parseCli.
@@ -201,6 +211,12 @@ export function createCli(): Command {
     .description('Check connector and BigQuery health')
     .action(noop)
 
+  program
+    .command('report')
+    .description('Generate and send donation report to Slack')
+    .requiredOption('--period <period>', 'Report period (weekly|monthly)')
+    .action(noop)
+
   return program
 }
 
@@ -214,6 +230,13 @@ const RawDailyOptsSchema = z.object({
   mergeOnly: z.boolean().optional(),
   funraiseCsv: z.string().optional(),
   venmoDir: z.string().optional(),
+})
+
+/**
+ * Raw Commander options schema for the report command.
+ */
+const RawReportOptsSchema = z.object({
+  period: z.string(),
 })
 
 /**
@@ -325,6 +348,17 @@ export function parseCli(args: string[]): Result<CliCommand, CliError> {
 
     case 'health':
       return ok({ command: 'health' })
+
+    case 'report': {
+      const opts = RawReportOptsSchema.parse(command.opts())
+      const parseResult = ReportOptionsSchema.safeParse({
+        period: opts.period,
+      })
+      if (!parseResult.success) {
+        return err(createError('validation', parseResult.error.message))
+      }
+      return ok({ command: 'report', options: parseResult.data })
+    }
 
     /* istanbul ignore next -- @preserve defensive: all known commands handled above, unknown commands rejected earlier */
     default:

@@ -17,8 +17,10 @@ export {
   EtlModeSchema,
   EtlRunSchema,
   EtlStatusSchema,
+  ReportRowSchema,
   SourceMetricsSchema,
   WatermarkSchema,
+  parseReportRows,
   type BigQueryConfig,
   type EtlMetrics,
   type EtlMode,
@@ -29,6 +31,8 @@ export {
   type LoadResult,
   type MergeOptions,
   type MergeResult,
+  type ReportData,
+  type ReportRow,
   type SourceMetrics,
   type Watermark,
 } from './types'
@@ -42,6 +46,9 @@ export {
   generateUpdateRunSql,
   generateUpsertWatermarkSql,
 } from './sql'
+
+// Report SQL
+export { generateReportSql } from './report-sql'
 
 // NDJSON utilities
 export {

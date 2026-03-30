@@ -16,6 +16,7 @@ import {
   generateGcsPath,
   generateGcsPattern,
 } from './ndjson'
+import { generateReportSql } from './report-sql'
 import {
   generateGetRunSql,
   generateGetWatermarkSql,
@@ -26,7 +27,9 @@ import {
 } from './sql'
 import {
   EtlRunSchema,
+  ReportRowSchema,
   WatermarkSchema,
+  parseReportRows,
   type BigQueryConfig,
   type EtlMetrics,
   type EtlMode,
@@ -35,6 +38,7 @@ import {
   type GCSConfig,
   type LoadResult,
   type MergeResult,
+  type ReportData,
   type Watermark,
 } from './types'
 
@@ -432,6 +436,28 @@ export class BigQueryClient {
           rowsUpdated: stats?.updatedRowCount ?? 0,
         })
       })
+  }
+
+  /**
+   * Query donation report aggregations for a date range.
+   *
+   * Returns totals, breakdown by source, campaign, and amount range.
+   * Filters to succeeded USD donations only.
+   */
+  queryReport(
+    fromTs: string,
+    toTs: string,
+  ): ResultAsync<ReportData, BigQueryError> {
+    const sql = generateReportSql(this.config)
+    const params = { from_ts: fromTs, to_ts: toTs }
+
+    return ResultAsync.fromPromise(
+      this.bq.query({ query: sql, params }),
+      (error) => createError('query', 'Failed to query report data', error),
+    ).map(([rows]) => {
+      const validated = z.array(ReportRowSchema).parse(rows)
+      return parseReportRows(validated)
+    })
   }
 
   /**

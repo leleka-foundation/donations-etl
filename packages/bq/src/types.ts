@@ -91,6 +91,65 @@ export interface BigQueryConfig {
 }
 
 /**
+ * Report row returned from the unified report query.
+ * Each row belongs to a section (total, by_source, by_campaign, by_amount_range).
+ */
+export const ReportRowSchema = z.object({
+  section: z.enum(['total', 'by_source', 'by_campaign', 'by_amount_range']),
+  label: z.string(),
+  total_cents: z.coerce.number(),
+  count: z.coerce.number(),
+  non_usd_excluded: z.coerce.number(),
+})
+
+export type ReportRow = z.infer<typeof ReportRowSchema>
+
+/**
+ * Structured report data, parsed from report query rows.
+ */
+export interface ReportData {
+  total: { totalCents: number; count: number; nonUsdExcluded: number }
+  bySource: { label: string; totalCents: number; count: number }[]
+  byCampaign: { label: string; totalCents: number; count: number }[]
+  byAmountRange: { label: string; totalCents: number; count: number }[]
+}
+
+/**
+ * Parse raw report rows into structured ReportData.
+ */
+export function parseReportRows(rows: ReportRow[]): ReportData {
+  const totalRow = rows.find((r) => r.section === 'total')
+  return {
+    total: {
+      totalCents: totalRow?.total_cents ?? 0,
+      count: totalRow?.count ?? 0,
+      nonUsdExcluded: totalRow?.non_usd_excluded ?? 0,
+    },
+    bySource: rows
+      .filter((r) => r.section === 'by_source')
+      .map((r) => ({
+        label: r.label,
+        totalCents: r.total_cents,
+        count: r.count,
+      })),
+    byCampaign: rows
+      .filter((r) => r.section === 'by_campaign')
+      .map((r) => ({
+        label: r.label,
+        totalCents: r.total_cents,
+        count: r.count,
+      })),
+    byAmountRange: rows
+      .filter((r) => r.section === 'by_amount_range')
+      .map((r) => ({
+        label: r.label,
+        totalCents: r.total_cents,
+        count: r.count,
+      })),
+  }
+}
+
+/**
  * GCS configuration.
  */
 export interface GCSConfig {

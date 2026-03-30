@@ -855,4 +855,111 @@ describe('BigQueryClient', () => {
       })
     })
   })
+
+  describe('queryReport', () => {
+    it('returns structured report data', async () => {
+      mockQuery.mockResolvedValue([
+        [
+          {
+            section: 'total',
+            label: 'total',
+            total_cents: '1500000',
+            count: '42',
+            non_usd_excluded: '3',
+          },
+          {
+            section: 'by_source',
+            label: 'mercury',
+            total_cents: '500000',
+            count: '10',
+            non_usd_excluded: '0',
+          },
+          {
+            section: 'by_source',
+            label: 'paypal',
+            total_cents: '1000000',
+            count: '32',
+            non_usd_excluded: '0',
+          },
+          {
+            section: 'by_campaign',
+            label: 'Spring Drive',
+            total_cents: '800000',
+            count: '25',
+            non_usd_excluded: '0',
+          },
+          {
+            section: 'by_amount_range',
+            label: '$0 - $100',
+            total_cents: '150000',
+            count: '25',
+            non_usd_excluded: '0',
+          },
+        ],
+        null,
+      ])
+
+      const result = await client.queryReport('2026-03-01', '2026-03-31')
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.total.totalCents).toBe(1500000)
+        expect(result.value.total.count).toBe(42)
+        expect(result.value.total.nonUsdExcluded).toBe(3)
+        expect(result.value.bySource).toHaveLength(2)
+        expect(result.value.bySource[0]?.label).toBe('mercury')
+        expect(result.value.byCampaign).toHaveLength(1)
+        expect(result.value.byCampaign[0]?.label).toBe('Spring Drive')
+        expect(result.value.byAmountRange).toHaveLength(1)
+      }
+    })
+
+    it('passes date parameters to query', async () => {
+      mockQuery.mockResolvedValue([
+        [
+          {
+            section: 'total',
+            label: 'total',
+            total_cents: '0',
+            count: '0',
+            non_usd_excluded: '0',
+          },
+        ],
+        null,
+      ])
+
+      await client.queryReport('2026-01-01', '2026-01-31')
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: { from_ts: '2026-01-01', to_ts: '2026-01-31' },
+        }),
+      )
+    })
+
+    it('returns error when query fails', async () => {
+      mockQuery.mockRejectedValue(new Error('BQ error'))
+
+      const result = await client.queryReport('2026-01-01', '2026-01-31')
+
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.type).toBe('query')
+        expect(result.error.message).toContain('Failed to query report data')
+      }
+    })
+
+    it('handles empty result set', async () => {
+      mockQuery.mockResolvedValue([[], null])
+
+      const result = await client.queryReport('2026-01-01', '2026-01-31')
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.total.totalCents).toBe(0)
+        expect(result.value.total.count).toBe(0)
+        expect(result.value.bySource).toEqual([])
+      }
+    })
+  })
 })
