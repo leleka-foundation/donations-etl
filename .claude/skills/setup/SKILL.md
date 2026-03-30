@@ -43,7 +43,7 @@ Read the current `.env` to check what is already configured.
 
 ## Step 2: Organization Identity
 
-Ask the user for their organization details. Use `AskUserQuestion` for each.
+Ask the user for each of these details interactively, one at a time.
 
 | Field                | Env Var                | Description                                                                                                                                                                          | Required |
 | -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
@@ -80,7 +80,9 @@ Ask the user for their GCP project configuration:
 | Region            | `REGION`     | `us-central1` | Cloud Run and Artifact Registry region   |
 | BigQuery location | `LOCATION`   | `US`          | BigQuery dataset location (multi-region) |
 
-Update `.env` with the values. The `BUCKET` will default to `${PROJECT_ID}-donations-etl`.
+Update `.env` with the values. Also set `BUCKET` to `{PROJECT_ID}-donations-etl` (e.g.,
+`sunrise-relief-123-donations-etl`). The `.env.example` uses `${PROJECT_ID}` shell interpolation
+which works with `dotenvx run`, but it's clearer to set the full value explicitly.
 
 Then check if gcloud is installed and authenticated:
 
@@ -221,7 +223,10 @@ If no:
 - Tell the user: "Slack integration skipped. You can still generate letters via the REST API or the /donor-letter Claude skill."
 - Set a placeholder for `LETTER_SERVICE_API_KEY` if they want the REST API
 
-## Step 7: Install Dependencies
+## Step 7: Install Dependencies (if not already done)
+
+If dependencies haven't been installed yet (e.g., running `/setup` standalone without
+`/bootstrap`):
 
 ```bash
 bun install

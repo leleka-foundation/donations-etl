@@ -1,0 +1,23 @@
+{
+  "skill_name": "tdd",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Hey, I'm seeing incorrect amounts in BigQuery for Mercury donations. Some transactions show $5000 when they should be $50.00. I think it's a cents-to-dollars conversion issue somewhere in the Mercury transformer. Can you fix this?",
+      "expected_output": "Should: 1) Identify the bug location, 2) Write a failing test that reproduces the cents-vs-dollars issue with specific amounts, 3) Watch it fail, 4) Fix the transformer, 5) Verify the test passes. Should NOT jump straight to fixing the code.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I need to add a function that deduplicates donations across multiple connectors. If the same donation appears in both Mercury and PayPal (matched by amount, date, and donor name within a 1-day window), we should keep only the Mercury one. Can you implement this?",
+      "expected_output": "Should: 1) Write failing tests first covering: exact match, near-date match, same amount different donors, same donor different amounts, empty inputs, single-source input, 2) Implement minimal code to pass each test, 3) Not write production code before tests.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I'm getting this error in the Cloud Run logs: 'ZodError: Expected string, received null at path: transactions[3].counterpartyName'. The ETL job is crashing on Mercury sync. Fix it so it doesn't crash.",
+      "expected_output": "Should: 1) Find where counterpartyName is validated, 2) Write a failing test with a transaction where counterpartyName is null, 3) Watch it fail with a similar Zod error, 4) Fix the schema/transformer to handle null counterpartyName, 5) Verify with test.",
+      "files": []
+    }
+  ]
+}

@@ -34,7 +34,7 @@ Ask the user to confirm or update these core settings in `.env`:
 | `REGION`     | `us-central1`   | Cloud Run region      |
 | `LOCATION`   | `US`            | BigQuery multi-region |
 
-Use `AskUserQuestion` to confirm the GCP project is correct before proceeding.
+Ask the user to confirm the GCP project is correct before proceeding.
 
 ### Step 3: API Key Setup
 
