@@ -84,7 +84,17 @@ export function createSlackApp(config: Config, logger: Logger) {
       { bucket: '' }, // Not used for queries
     )
 
+    // Get bot user ID for identifying bot messages in thread history
+    let botUserId: string | undefined
     app.event('app_mention', async ({ event, client }) => {
+      if (!botUserId) {
+        try {
+          const auth = await client.auth.test()
+          botUserId = auth.user_id ?? undefined
+        } catch {
+          // Non-critical
+        }
+      }
       // Strip the bot mention to get the question
       const question = event.text.replace(/<@[A-Z0-9]+>/g, '').trim()
 
@@ -108,6 +118,7 @@ export function createSlackApp(config: Config, logger: Logger) {
           runAgentFn: runDonationAgent,
           queryFn: buildQueryFn(bqClient.executeReadOnlyQuery.bind(bqClient)),
           slackClient: client,
+          botUserId,
         },
       )
     })

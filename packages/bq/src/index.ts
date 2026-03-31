@@ -59,6 +59,7 @@ export {
   runDonationAgent,
   type AgentError,
   type AgentResult,
+  type ConversationMessage,
   type QueryFn,
 } from './donation-agent'
 

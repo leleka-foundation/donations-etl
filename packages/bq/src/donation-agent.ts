@@ -190,6 +190,14 @@ export function buildQueryFn(
 }
 
 /**
+ * A message in the conversation history.
+ */
+export interface ConversationMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/**
  * Agent result containing the formatted answer and SQL used.
  */
 export interface AgentResult {
@@ -200,22 +208,32 @@ export interface AgentResult {
 /**
  * Run the donation agent to answer a question.
  *
+ * Accepts optional conversation history for follow-up questions in threads.
  * Returns the formatted Slack mrkdwn text and the SQL that was executed.
  */
 export function runDonationAgent(
   question: string,
   config: BigQueryConfig,
   queryFn: QueryFn,
+  history?: ConversationMessage[],
 ): ResultAsync<AgentResult, AgentError> {
   const agent = createDonationAgent(config, queryFn)
 
-  return ResultAsync.fromPromise(
-    agent.generate({ prompt: question }),
-    (error) => ({
-      type: 'agent' as const,
-      message: `Agent failed: ${error instanceof Error ? error.message : String(error)}`,
-    }),
-  ).andThen((result) => {
+  // Build the generate args: use messages for multi-turn, prompt for single-turn
+  const generateArgs =
+    history && history.length > 0
+      ? {
+          messages: [
+            ...history.map((m) => ({ role: m.role, content: m.content })),
+            { role: 'user' as const, content: question },
+          ],
+        }
+      : { prompt: question }
+
+  return ResultAsync.fromPromise(agent.generate(generateArgs), (error) => ({
+    type: 'agent' as const,
+    message: `Agent failed: ${error instanceof Error ? error.message : String(error)}`,
+  })).andThen((result) => {
     if (!result.text) {
       return errAsync({
         type: 'agent' as const,

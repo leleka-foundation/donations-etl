@@ -425,4 +425,63 @@ describe('runDonationAgent', () => {
       expect(result.error.message).toContain('no text')
     }
   })
+
+  it('passes conversation history as messages for follow-ups', async () => {
+    const mockQueryFn = vi.fn<QueryFn>().mockResolvedValue({
+      ok: true,
+      rows: [{ source: 'mercury', total: 3000 }],
+      totalRows: 1,
+    })
+
+    let modelCallCount = 0
+    mockModel = new MockLanguageModelV3({
+      doGenerate: async () => {
+        modelCallCount++
+        if (modelCallCount === 1) {
+          return {
+            content: [
+              {
+                type: 'tool-call' as const,
+                toolCallId: 'call-1',
+                toolName: 'query_bigquery',
+                input: JSON.stringify({
+                  sql: 'SELECT source, SUM(amount_cents)/100 AS total FROM events GROUP BY source',
+                }),
+              },
+            ],
+            finishReason: { unified: 'tool-calls' as const, raw: undefined },
+            usage,
+            warnings: [],
+          }
+        }
+        return {
+          content: [{ type: 'text' as const, text: 'Mercury: $3,000' }],
+          finishReason: { unified: 'stop' as const, raw: undefined },
+          usage,
+          warnings: [],
+        }
+      },
+    })
+
+    const history = [
+      { role: 'user' as const, content: 'compare march donations' },
+      {
+        role: 'assistant' as const,
+        content: '$10,000 in 2025 vs $15,000 in 2026',
+      },
+    ]
+
+    const result = await runDonationAgent(
+      'break down by source',
+      config,
+      mockQueryFn,
+      history,
+    )
+
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) {
+      expect(result.value.text).toContain('Mercury')
+      expect(mockQueryFn).toHaveBeenCalled()
+    }
+  })
 })

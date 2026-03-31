@@ -53,6 +53,12 @@ async function main(): Promise<void> {
         url.pathname === '/slack/interactivity' ||
         url.pathname === '/slack/events'
       ) {
+        // Drop Slack retries — we process the first attempt asynchronously
+        // and retries during cold starts cause duplicate responses
+        if (request.headers.get('x-slack-retry-num')) {
+          return new Response('', { status: 200 })
+        }
+
         const body = await request.text()
 
         // Handle Slack url_verification challenge directly
