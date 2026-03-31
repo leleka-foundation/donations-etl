@@ -216,6 +216,14 @@ export function createSlackApp(config: Config, logger: Logger) {
 
     // Build history from thread if this is a follow-up
     let history: ConversationMessage[] = []
+    logger.info(
+      {
+        thread_ts: event.thread_ts,
+        event_ts: event.ts,
+        channel: event.channel,
+      },
+      'app_mention event details',
+    )
     if (event.thread_ts) {
       try {
         const thread = await client.conversations.replies({
