@@ -13,6 +13,7 @@ import type { Config } from '../config'
 import { handleDonorLetterCommand } from './commands/donor-letter'
 import { prettySql } from './formatters/query-result'
 import { BunReceiver } from './receiver'
+import { buildThreadHistory } from './thread-history'
 import type { ViewSubmissionArgs } from './views/letter-modal'
 import {
   handleLetterModalSubmission,
@@ -124,9 +125,10 @@ export function createSlackApp(config: Config, logger: Logger) {
       }
 
       // Build conversation history from thread messages
-      const history: ConversationMessage[] = []
+      let history: ConversationMessage[] = []
       const threadTs =
         'thread_ts' in message ? String(message.thread_ts) : undefined
+      const messageTs = 'ts' in message ? String(message.ts) : ''
       if (threadTs && message.channel) {
         try {
           const thread = await client.conversations.replies({
@@ -134,18 +136,7 @@ export function createSlackApp(config: Config, logger: Logger) {
             ts: threadTs,
             limit: 20,
           })
-          const messages = thread.messages ?? []
-          // Map to conversation history, skip last message (current question)
-          // and SQL replies
-          for (const msg of messages.slice(0, -1)) {
-            if (!msg.text) continue
-            if (msg.text.startsWith('_Generated SQL:_')) continue
-            const isBot = msg.bot_id !== undefined
-            history.push({
-              role: isBot ? 'assistant' : 'user',
-              content: msg.text,
-            })
-          }
+          history = buildThreadHistory(thread.messages ?? [], messageTs)
         } catch {
           // Non-critical: continue without history
         }
@@ -219,7 +210,7 @@ export function createSlackApp(config: Config, logger: Logger) {
     }
 
     // Build history from thread if this is a follow-up
-    const history: ConversationMessage[] = []
+    let history: ConversationMessage[] = []
     if (event.thread_ts) {
       try {
         const thread = await client.conversations.replies({
@@ -227,14 +218,7 @@ export function createSlackApp(config: Config, logger: Logger) {
           ts: event.thread_ts,
           limit: 20,
         })
-        for (const msg of (thread.messages ?? []).slice(0, -1)) {
-          if (!msg.text) continue
-          if (msg.text.startsWith('_Generated SQL:_')) continue
-          history.push({
-            role: msg.bot_id ? 'assistant' : 'user',
-            content: msg.text.replace(/<@[A-Z0-9]+>/g, '').trim(),
-          })
-        }
+        history = buildThreadHistory(thread.messages ?? [], event.ts)
       } catch {
         // Non-critical
       }
