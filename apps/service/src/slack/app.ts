@@ -1,16 +1,17 @@
 /**
- * Slack Bolt App initialization and command/view registration.
+ * Slack Bolt App initialization with Assistant API for donation queries.
  */
 import {
   BigQueryClient,
   buildQueryFn,
   runDonationAgent,
+  type ConversationMessage,
 } from '@donations-etl/bq'
-import { App } from '@slack/bolt'
+import { App, Assistant } from '@slack/bolt'
 import type { Logger } from 'pino'
 import type { Config } from '../config'
-import { handleDonationQuery } from './commands/donation-query'
 import { handleDonorLetterCommand } from './commands/donor-letter'
+import { prettySql } from './formatters/query-result'
 import { BunReceiver } from './receiver'
 import type { ViewSubmissionArgs } from './views/letter-modal'
 import {
@@ -37,8 +38,7 @@ export function createSlackApp(config: Config, logger: Logger) {
     await handleDonorLetterCommand(args, config, logger)
   })
 
-  // Register modal submission handler.
-  // We bridge between Bolt's discriminated union types and our handler's simpler interface.
+  // Register modal submission handler
   app.view(LETTER_MODAL_CALLBACK_ID, async ({ ack, view, client }) => {
     const handlerArgs: ViewSubmissionArgs = {
       ack: async (response?: {
@@ -73,58 +73,121 @@ export function createSlackApp(config: Config, logger: Logger) {
     await handleLetterModalSubmission(handlerArgs, config, logger)
   })
 
-  // Register app_mention handler for donation queries
-  {
-    const bqClient = new BigQueryClient(
-      {
+  // Register AI Assistant for donation queries
+  const bqClient = new BigQueryClient(
+    {
+      projectId: config.PROJECT_ID,
+      datasetRaw: 'donations_raw',
+      datasetCanon: config.DATASET_CANON,
+    },
+    { bucket: '' },
+  )
+
+  const queryFn = buildQueryFn(bqClient.executeReadOnlyQuery.bind(bqClient))
+
+  const assistant = new Assistant({
+    threadStarted: async ({ say, setSuggestedPrompts, setTitle }) => {
+      await setTitle('Donation Assistant')
+      await say(
+        'Hi! I can answer questions about your donations. Ask me anything.',
+      )
+      await setSuggestedPrompts({
+        prompts: [
+          {
+            title: 'Total raised',
+            message: 'How much did we raise this year?',
+          },
+          { title: 'Top donors', message: 'Who are our top 10 donors?' },
+          {
+            title: 'By source',
+            message: 'Total donations by source this year',
+          },
+          { title: 'Last month', message: 'How much did we raise last month?' },
+        ],
+      })
+    },
+
+    userMessage: async ({ message, say, setStatus, client }) => {
+      const question =
+        'text' in message && typeof message.text === 'string'
+          ? message.text.trim()
+          : ''
+
+      if (!question) return
+
+      await setStatus('Querying donations...')
+
+      const bqConfig = {
         projectId: config.PROJECT_ID,
         datasetRaw: 'donations_raw',
         datasetCanon: config.DATASET_CANON,
-      },
-      { bucket: '' }, // Not used for queries
-    )
+      }
 
-    // Get bot user ID for identifying bot messages in thread history
-    let botUserId: string | undefined
-    app.event('app_mention', async ({ event, client }) => {
-      if (!botUserId) {
+      // Build conversation history from thread messages
+      const history: ConversationMessage[] = []
+      const threadTs =
+        'thread_ts' in message ? String(message.thread_ts) : undefined
+      if (threadTs && message.channel) {
         try {
-          const auth = await client.auth.test()
-          botUserId = auth.user_id ?? undefined
+          const thread = await client.conversations.replies({
+            channel: message.channel,
+            ts: threadTs,
+            limit: 20,
+          })
+          const messages = thread.messages ?? []
+          // Map to conversation history, skip last message (current question)
+          // and SQL replies
+          for (const msg of messages.slice(0, -1)) {
+            if (!msg.text) continue
+            if (msg.text.startsWith('_Generated SQL:_')) continue
+            const isBot = msg.bot_id !== undefined
+            history.push({
+              role: isBot ? 'assistant' : 'user',
+              content: msg.text,
+            })
+          }
         } catch {
-          // Non-critical
+          // Non-critical: continue without history
         }
       }
-      // Strip the bot mention to get the question
-      const question = event.text.replace(/<@[A-Z0-9]+>/g, '').trim()
 
-      if (!question) {
-        await client.chat.postMessage({
-          channel: event.channel,
-          text: 'Ask me a question about donations! For example: "How much did we raise this year?"',
-          thread_ts: event.thread_ts ?? event.ts,
-        })
+      logger.info(
+        { question, hasHistory: history.length > 0 },
+        'Running donation agent',
+      )
+
+      const result = await runDonationAgent(
+        question,
+        bqConfig,
+        queryFn,
+        history,
+      )
+
+      if (result.isErr()) {
+        logger.error({ error: result.error, question }, 'Agent failed')
+        await say(
+          "I couldn't answer that question. Try rephrasing it or asking something simpler.",
+        )
         return
       }
 
-      await handleDonationQuery(
-        question,
-        event.channel,
-        event.thread_ts,
-        event.ts,
-        config,
-        logger,
-        {
-          runAgentFn: runDonationAgent,
-          queryFn: buildQueryFn(bqClient.executeReadOnlyQuery.bind(bqClient)),
-          slackClient: client,
-          botUserId,
-        },
-      )
-    })
+      const { text, sql } = result.value
 
-    logger.info('Donation query bot enabled')
-  }
+      logger.info({ question, sql, textLength: text.length }, 'Agent completed')
+
+      // Post the formatted answer
+      await say(text)
+
+      // Post SQL as a follow-up (smaller, for reference)
+      if (sql) {
+        const formatted = prettySql(sql)
+        await say(`_Generated SQL:_\n\`\`\`${formatted}\`\`\``)
+      }
+    },
+  })
+
+  app.assistant(assistant)
+  logger.info('Donation assistant registered')
 
   return { app, receiver }
 }
