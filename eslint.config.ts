@@ -119,6 +119,7 @@ export default defineConfig(
     '.next/**',
     '**/dist/**',
     '.claude/**',
+    '*-workspace/**',
     '.claude/skills/**',
     '.codex/skills/**',
   ]),

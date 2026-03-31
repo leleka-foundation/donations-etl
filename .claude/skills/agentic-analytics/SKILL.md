@@ -1,6 +1,6 @@
 ---
 name: agentic-analytics
-description: Build AI-powered natural language analytics using the Vercel AI SDK ToolLoopAgent pattern with BigQuery. Use this skill whenever the user wants to add a natural language query interface, NL2SQL, data Q&A bot, AI-powered reporting, or any feature where users ask questions about data in plain English and get answers from a database. Triggers on "ask questions about data", "natural language SQL", "AI query", "data assistant", "analytics bot", "chat with data".
+description: Build AI-powered natural language analytics using the Vercel AI SDK ToolLoopAgent pattern with BigQuery. Use this skill whenever the user wants to add a natural language query interface, NL2SQL, data Q&A bot, AI-powered reporting, or any feature where users ask questions about data in plain English and get answers from a database. Triggers on "ask questions about data", "natural language SQL", "AI query", "data assistant", "analytics bot", "chat with data", "query bot for a different table", "add a data source", "bad SQL", "hallucinated columns".
 ---
 
 # Agentic Analytics: Natural Language → SQL → Formatted Answer
@@ -13,11 +13,11 @@ translates them to SQL, executes the queries, and formats the results.
 - Building a Q&A bot that answers data questions
 - Adding natural language query capability to any data source
 - Creating AI-powered dashboards or reports
+- Adding a new table/data source to an existing query bot
+- Troubleshooting SQL generation issues (hallucinated columns, bad queries)
 - Any feature where users should be able to "chat with their data"
 
 ## Architecture: ToolLoopAgent with Query Tool
-
-The core pattern uses the Vercel AI SDK's `ToolLoopAgent`:
 
 ```
 User question
@@ -38,12 +38,7 @@ This is better than a linear pipeline (generate SQL → execute → format) beca
 
 ## Reference Implementation
 
-See `packages/bq/src/donation-agent.ts` for the complete implementation:
-
-- `createDonationAgent()` — creates the ToolLoopAgent with a query tool
-- `buildQueryFn()` — wraps BigQuery execution with SQL safety validation
-- `buildAgentPrompt()` — comprehensive system prompt with schema + rules + formatting
-- `runDonationAgent()` — runs the agent and extracts results
+See `packages/bq/src/donation-agent.ts` for the complete implementation.
 
 ## Key Components
 
@@ -69,13 +64,20 @@ const agent = new ToolLoopAgent({
 
 ### 2. The System Prompt
 
-The system prompt is the most important piece. It should include:
+The system prompt is the most important piece — it determines SQL quality and output formatting.
+It should include:
 
 - **Table schema** with column names, types, and descriptions
 - **Business rules** (e.g., "amounts are in cents, divide by 100 for dollars")
 - **SQL dialect rules** (e.g., "use BigQuery SQL syntax")
+- **Common mistakes to avoid** — explicitly list column names the LLM tends to hallucinate
+  and their correct alternatives (e.g., "There is no `campaign` column. Use `attribution_human`.")
 - **Formatting rules** for the output (Slack mrkdwn, HTML, plain text, etc.)
-- **Few-shot examples** mapping questions to SQL (5-10 examples)
+- **Few-shot examples** mapping questions to SQL (5-10 examples covering different query types)
+
+If the bot hallucinates column names, the fix is almost always in the prompt — add negative
+examples, improve descriptions, or add more few-shot examples. The self-correction loop helps
+but burns tokens and latency; getting the prompt right is more efficient.
 
 See `buildAgentPrompt()` in `donation-agent.ts` for a complete example.
 
@@ -148,14 +150,51 @@ const lastQueryCall = allToolCalls.findLast(
 const sql = z.object({ sql: z.string() }).safeParse(lastQueryCall?.input)
 ```
 
+## Adding a New Data Source or Table
+
+When adding a query agent for a different table (e.g., ETL run history, user accounts):
+
+1. **Create a separate agent** with its own system prompt tailored to the new schema.
+   Don't combine multiple schemas into one prompt — it confuses the LLM.
+
+2. **Reuse the infrastructure**: `QueryFn` type, `buildQueryFn`, `sql-safety.ts` validation,
+   and `BigQueryClient.executeReadOnlyQuery` are all reusable as-is.
+
+3. **Use a distinct tool name** (e.g., `query_etl_runs` vs `query_bigquery`) to avoid
+   confusion when multiple agents coexist.
+
+4. **Route questions** to the right agent. Options:
+   - Keyword-based routing (fast, zero LLM cost): regex patterns match question to agent
+   - LLM-based routing (more flexible): a cheap classifier picks the agent
+   - Single multi-tool agent (simplest for 2-3 sources): one agent with multiple query tools
+
+## Multi-Source Queries (Cross-Database)
+
+When users need to query across multiple databases (e.g., BigQuery + PostgreSQL):
+
+Use a **multi-tool agent** — one ToolLoopAgent with separate query tools per database:
+
+```typescript
+tools: {
+  query_bigquery: tool({ ... }),
+  query_postgres: tool({ ... }),
+}
+```
+
+The LLM orchestrates cross-source "joins" by querying one source, extracting linking values
+(e.g., email addresses), then querying the other. This is simpler and safer than federated
+SQL. Increase `MAX_STEPS` to 8-10 for multi-source queries.
+
+The `sql-safety` module (`validateReadOnlySql`, `ensureLimit`) is dialect-agnostic and works
+for both BigQuery and PostgreSQL.
+
 ## Testing with MockLanguageModelV3
 
-Use the AI SDK's built-in test helpers — not manual mocks:
+Use the AI SDK's built-in test helpers — not manual mocks of the ai module:
 
 ```typescript
 import { MockLanguageModelV3 } from 'ai/test'
 
-// Simulate: tool call → text response
 let callCount = 0
 const mockModel = new MockLanguageModelV3({
   doGenerate: async () => {
@@ -186,12 +225,18 @@ const mockModel = new MockLanguageModelV3({
 ```
 
 The real `ToolLoopAgent` runs with the mock model, and the tool's `execute` is actually
-called. See `packages/bq/tests/donation-agent.test.ts` for complete examples.
+called. Test self-correction by returning errors from the query function on the first call.
+See `packages/bq/tests/donation-agent.test.ts` for complete examples including:
+
+- Tool call flow-through
+- Self-correction on query error
+- Invalid tool input handling
+- Multi-turn conversation history
+- No-text response
 
 ## Model Selection
 
-For SQL generation + formatting, use a fast, cheap model. The schema is fixed and the task
-is well-defined — you don't need a frontier model.
+For SQL generation + formatting, use a fast, cheap model:
 
 - **Google Gemini 2.5 Flash** ($0.15/$0.60 per 1M tokens) — current default, fast
 - **Claude Haiku 4.5** ($1/$5 per 1M tokens) — good alternative
@@ -209,12 +254,3 @@ same as BigQuery). No separate API key needed.
 | `packages/bq/src/client.ts`                | `executeReadOnlyQuery` method                |
 | `packages/bq/tests/donation-agent.test.ts` | Tests using MockLanguageModelV3              |
 | `infra/provision.sh`                       | Read-only service account setup              |
-
-## Adapting to Other Data Sources
-
-This pattern is not BigQuery-specific. To adapt:
-
-1. Replace the system prompt's schema section with your table(s)
-2. Replace `executeReadOnlyQuery` with your database client
-3. Adjust SQL dialect rules in the prompt (PostgreSQL, MySQL, etc.)
-4. Keep the safety layers (validation, read-only user, LIMIT injection)
