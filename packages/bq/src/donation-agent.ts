@@ -26,7 +26,7 @@ export interface AgentError {
 /**
  * Default model for the donation agent.
  */
-const AGENT_MODEL = 'gemini-2.5-flash'
+const DEFAULT_AGENT_MODEL = 'gemini-3.1-flash-lite-preview'
 
 /**
  * Maximum agent steps (SQL generation + execution + formatting).
@@ -131,14 +131,18 @@ Formatting guidelines:
  * The agent has a single tool: query_bigquery, which executes read-only SQL.
  * The queryFn is injected for testability.
  */
-export function createDonationAgent(config: BigQueryConfig, queryFn: QueryFn) {
+export function createDonationAgent(
+  config: BigQueryConfig,
+  queryFn: QueryFn,
+  model?: string,
+) {
   const vertex = createVertex({
     project: config.projectId,
     location: 'us-central1',
   })
 
   return new ToolLoopAgent({
-    model: vertex(AGENT_MODEL),
+    model: vertex(model ?? DEFAULT_AGENT_MODEL),
     instructions: buildAgentPrompt(config),
     tools: {
       query_bigquery: tool({
@@ -216,8 +220,9 @@ export function runDonationAgent(
   config: BigQueryConfig,
   queryFn: QueryFn,
   history?: ConversationMessage[],
+  model?: string,
 ): ResultAsync<AgentResult, AgentError> {
-  const agent = createDonationAgent(config, queryFn)
+  const agent = createDonationAgent(config, queryFn, model)
 
   // Build the generate args: use messages for multi-turn, prompt for single-turn
   const generateArgs =

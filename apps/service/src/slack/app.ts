@@ -152,6 +152,7 @@ export function createSlackApp(config: Config, logger: Logger) {
         bqConfig,
         queryFn,
         history,
+        config.AGENT_MODEL,
       )
 
       if (result.isErr()) {

@@ -266,7 +266,11 @@ If yes:
 2. No additional API keys needed — the bot uses Google Vertex AI with the same GCP
    credentials as BigQuery. The Vertex AI API must be enabled in the project (provisioning
    handles this).
-3. Ensure the GCP project has the Vertex AI API enabled:
+3. Ask which AI model to use for the query agent:
+   - Default: `gemini-3.1-flash-lite-preview` (cheapest, fast)
+   - Alternative: `gemini-2.5-flash` (more capable, slightly more expensive)
+   - Set `AGENT_MODEL` in `.env` (leave empty to use the default)
+4. Ensure the GCP project has the Vertex AI API enabled:
    ```bash
    gcloud services enable aiplatform.googleapis.com
    ```

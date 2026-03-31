@@ -216,11 +216,14 @@ If yes:
 
 1. No additional API keys needed — the bot uses Google Vertex AI with the same GCP auth
    as BigQuery.
-2. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
+2. Ask which AI model to use (set `AGENT_MODEL` env var on the Cloud Run service):
+   - Default: `gemini-3.1-flash-lite-preview`
+   - Alternative: `gemini-2.5-flash` (more capable)
+3. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
    - Go to Slack app settings > OAuth & Permissions > add `app_mentions:read`
    - Go to Event Subscriptions > enable > subscribe to `app_mention` bot event
    - Set Request URL to `https://<service-url>/slack/events`
-3. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
+4. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
    with only `bigquery.dataViewer` and `bigquery.jobUser` permissions
 
 If no: skip. The query bot activates automatically when `AI_GATEWAY_API_KEY` is set.
