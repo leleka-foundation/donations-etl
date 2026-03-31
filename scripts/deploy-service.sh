@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Deploy the letter service to GCP Cloud Run with Slack app provisioning
+# Deploy the service to GCP Cloud Run with Slack app provisioning
 #
-# Usage: ./scripts/deploy-letter-service.sh [--dry-run] [--skip-secrets] [--skip-build] [--skip-slack]
+# Usage: ./scripts/deploy-service.sh [--dry-run] [--skip-secrets] [--skip-build] [--skip-slack]
 #
 # This script:
 # 1. Creates a Slack app via the Slack API (idempotent — skips if app ID in .env)
@@ -26,10 +26,10 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-log()   { echo -e "${GREEN}[letter-service]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[letter-service]${NC} $1"; }
-error() { echo -e "${RED}[letter-service]${NC} $1" >&2; }
-info()  { echo -e "${CYAN}[letter-service]${NC} $1"; }
+log()   { echo -e "${GREEN}[service]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[service]${NC} $1"; }
+error() { echo -e "${RED}[service]${NC} $1" >&2; }
+info()  { echo -e "${CYAN}[service]${NC} $1"; }
 
 # Re-invoke with dotenvx if not already running under it
 if [[ -z "${__LETTER_DEPLOY_LOADED:-}" ]]; then
@@ -64,7 +64,7 @@ DATASET_CANON="${DATASET_CANON:-donations}"
 RUNTIME_SA="${RUNTIME_SA:-donations-etl-sa}"
 RUNTIME_SA_EMAIL="${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-SERVICE_NAME="letter-service"
+SERVICE_NAME="letter-service"  # Cloud Run service name (kept for backward compatibility)
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:latest"
 
 # Slack app state (may be set in .env from a previous run)
@@ -283,25 +283,25 @@ else
   }
 
   # Generate API key if not already in Secret Manager
-  LETTER_SERVICE_API_KEY="${LETTER_SERVICE_API_KEY:-}"
-  if [[ -z "$LETTER_SERVICE_API_KEY" ]]; then
-    LETTER_SERVICE_API_KEY=$(gcloud secrets versions access latest \
-      --secret=LETTER_SERVICE_API_KEY \
+  SERVICE_API_KEY="${SERVICE_API_KEY:-}"
+  if [[ -z "$SERVICE_API_KEY" ]]; then
+    SERVICE_API_KEY=$(gcloud secrets versions access latest \
+      --secret=SERVICE_API_KEY \
       --project="${PROJECT_ID}" 2>/dev/null || echo "")
   fi
-  if [[ -z "$LETTER_SERVICE_API_KEY" ]]; then
-    LETTER_SERVICE_API_KEY=$(openssl rand -hex 32)
-    log "  LETTER_SERVICE_API_KEY — generated"
+  if [[ -z "$SERVICE_API_KEY" ]]; then
+    SERVICE_API_KEY=$(openssl rand -hex 32)
+    log "  SERVICE_API_KEY — generated"
   fi
 
-  ensure_secret "LETTER_SERVICE_API_KEY" "$LETTER_SERVICE_API_KEY"
+  ensure_secret "SERVICE_API_KEY" "$SERVICE_API_KEY"
   ensure_secret "SLACK_BOT_TOKEN" "${SLACK_BOT_TOKEN:-placeholder}"
   ensure_secret "SLACK_SIGNING_SECRET" "${SLACK_SIGNING_SECRET:-placeholder}"
 
   # Grant SA access to secrets
   if [[ "$DRY_RUN" != "true" ]]; then
     log "Granting ${RUNTIME_SA} access to secrets..."
-    for SECRET_NAME in LETTER_SERVICE_API_KEY SLACK_BOT_TOKEN SLACK_SIGNING_SECRET; do
+    for SECRET_NAME in SERVICE_API_KEY SLACK_BOT_TOKEN SLACK_SIGNING_SECRET; do
       gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -321,11 +321,11 @@ if [[ "$SKIP_BUILD" == "true" ]]; then
 else
   log "Building Docker image via Cloud Build..."
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "  Would run: gcloud builds submit --tag ${IMAGE_URI} --dockerfile apps/letter-service/Dockerfile"
+    log "  Would run: gcloud builds submit --tag ${IMAGE_URI} --dockerfile apps/service/Dockerfile"
   else
     gcloud builds submit \
       --project "${PROJECT_ID}" \
-      --config apps/letter-service/cloudbuild.yaml \
+      --config apps/service/cloudbuild.yaml \
       --substitutions "_IMAGE_URI=${IMAGE_URI}" \
       --quiet \
       .
@@ -347,7 +347,7 @@ else
     --image "${IMAGE_URI}" \
     --service-account "${RUNTIME_SA_EMAIL}" \
     --set-env-vars "PROJECT_ID=${PROJECT_ID},DATASET_CANON=${DATASET_CANON}" \
-    --set-secrets "LETTER_SERVICE_API_KEY=LETTER_SERVICE_API_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest" \
+    --set-secrets "SERVICE_API_KEY=SERVICE_API_KEY:latest,SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET:latest" \
     --memory 1Gi \
     --cpu 1 \
     --min-instances 0 \
@@ -432,7 +432,7 @@ MANIFEST_EOF
   # ── Summary ───────────────────────────────────────────────────
 
   API_KEY=$(gcloud secrets versions access latest \
-    --secret=LETTER_SERVICE_API_KEY \
+    --secret=SERVICE_API_KEY \
     --project="${PROJECT_ID}" 2>/dev/null || echo "<could not read>")
 
   echo ""

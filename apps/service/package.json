@@ -1,5 +1,5 @@
 {
-  "name": "@donations-etl/letter-service",
+  "name": "@donations-etl/service",
   "version": "1.0.0",
   "type": "module",
   "main": "./src/main.ts",

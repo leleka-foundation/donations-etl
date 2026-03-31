@@ -1,5 +1,5 @@
 /**
- * Test utilities for the letter service.
+ * Test utilities for the service.
  */
 import pino from 'pino'
 import { z } from 'zod'

@@ -219,7 +219,7 @@ If yes:
 2. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
    - Go to Slack app settings > OAuth & Permissions > add `app_mentions:read`
    - Go to Event Subscriptions > enable > subscribe to `app_mention` bot event
-   - Set Request URL to `https://<letter-service-url>/slack/events`
+   - Set Request URL to `https://<service-url>/slack/events`
 3. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
    with only `bigquery.dataViewer` and `bigquery.jobUser` permissions
 

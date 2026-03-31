@@ -1,12 +1,12 @@
 /**
- * Configuration for the letter service.
+ * Configuration for the service.
  *
  * Loads and validates environment variables using Zod.
  */
 import { z } from 'zod'
 
 /**
- * Configuration schema for the letter service.
+ * Configuration schema for the service.
  */
 export const ConfigSchema = z.object({
   // Server
@@ -18,7 +18,7 @@ export const ConfigSchema = z.object({
   DATASET_CANON: z.string().default('donations'),
 
   // Auth
-  LETTER_SERVICE_API_KEY: z.string(),
+  SERVICE_API_KEY: z.string(),
 
   // Slack
   SLACK_BOT_TOKEN: z.string(),

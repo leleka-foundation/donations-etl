@@ -225,7 +225,7 @@ ensure_secrets() {
     ensure_secret "WISE_TOKEN" "SECRET_WISE_TOKEN"
   fi
 
-  # Optional: Slack Bot Token (for reports and letter service)
+  # Optional: Slack Bot Token (for reports and service)
   if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
     ensure_secret "SLACK_BOT_TOKEN" "SLACK_BOT_TOKEN"
   fi

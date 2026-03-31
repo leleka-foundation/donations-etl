@@ -1,5 +1,5 @@
 /**
- * Tests for the letter service configuration.
+ * Tests for the service configuration.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ConfigSchema, loadConfig } from '../src/config'
@@ -10,7 +10,7 @@ describe('ConfigSchema', () => {
     LOG_LEVEL: 'info',
     PROJECT_ID: 'test-project',
     DATASET_CANON: 'donations',
-    LETTER_SERVICE_API_KEY: 'test-key',
+    SERVICE_API_KEY: 'test-key',
     SLACK_BOT_TOKEN: 'xoxb-test-token',
     SLACK_SIGNING_SECRET: 'test-signing-secret',
   }
@@ -22,7 +22,7 @@ describe('ConfigSchema', () => {
     expect(config.LOG_LEVEL).toBe('info')
     expect(config.PROJECT_ID).toBe('test-project')
     expect(config.DATASET_CANON).toBe('donations')
-    expect(config.LETTER_SERVICE_API_KEY).toBe('test-key')
+    expect(config.SERVICE_API_KEY).toBe('test-key')
     expect(config.SLACK_BOT_TOKEN).toBe('xoxb-test-token')
     expect(config.SLACK_SIGNING_SECRET).toBe('test-signing-secret')
     expect(config.ORG_NAME).toBe('Your Organization')
@@ -72,8 +72,8 @@ describe('ConfigSchema', () => {
     expect(() => ConfigSchema.parse(rest)).toThrow()
   })
 
-  it('rejects missing LETTER_SERVICE_API_KEY', () => {
-    const { LETTER_SERVICE_API_KEY: _, ...rest } = validEnv
+  it('rejects missing SERVICE_API_KEY', () => {
+    const { SERVICE_API_KEY: _, ...rest } = validEnv
 
     expect(() => ConfigSchema.parse(rest)).toThrow()
   })
@@ -107,7 +107,7 @@ describe('loadConfig', () => {
   beforeEach(() => {
     // Set required env vars
     process.env.PROJECT_ID = 'test-project'
-    process.env.LETTER_SERVICE_API_KEY = 'test-key'
+    process.env.SERVICE_API_KEY = 'test-key'
     process.env.SLACK_BOT_TOKEN = 'xoxb-test'
     process.env.SLACK_SIGNING_SECRET = 'test-secret'
   })
@@ -126,7 +126,7 @@ describe('loadConfig', () => {
     const config = loadConfig()
 
     expect(config.PROJECT_ID).toBe('test-project')
-    expect(config.LETTER_SERVICE_API_KEY).toBe('test-key')
+    expect(config.SERVICE_API_KEY).toBe('test-key')
     expect(config.SLACK_BOT_TOKEN).toBe('xoxb-test')
     expect(config.SLACK_SIGNING_SECRET).toBe('test-secret')
   })

@@ -31,7 +31,7 @@ export async function route(
     if (
       !validateBearerToken(
         request.headers.get('Authorization'),
-        config.LETTER_SERVICE_API_KEY,
+        config.SERVICE_API_KEY,
       )
     ) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {

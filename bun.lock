@@ -67,21 +67,6 @@
         "typescript": "^5.9.3",
       },
     },
-    "apps/letter-service": {
-      "name": "@donations-etl/letter-service",
-      "version": "1.0.0",
-      "dependencies": {
-        "@donations-etl/bq": "workspace:*",
-        "@donations-etl/letter": "workspace:*",
-      },
-      "peerDependencies": {
-        "@slack/bolt": "^4.0.0",
-        "luxon": "^3.0.0",
-        "neverthrow": "^8.0.0",
-        "pino": "^10.0.0",
-        "zod": "^4.0.0",
-      },
-    },
     "apps/runner": {
       "name": "@donations-etl/runner",
       "version": "1.0.0",
@@ -95,6 +80,21 @@
       },
       "peerDependencies": {
         "commander": "^14.0.0",
+        "luxon": "^3.0.0",
+        "neverthrow": "^8.0.0",
+        "pino": "^10.0.0",
+        "zod": "^4.0.0",
+      },
+    },
+    "apps/service": {
+      "name": "@donations-etl/service",
+      "version": "1.0.0",
+      "dependencies": {
+        "@donations-etl/bq": "workspace:*",
+        "@donations-etl/letter": "workspace:*",
+      },
+      "peerDependencies": {
+        "@slack/bolt": "^4.0.0",
         "luxon": "^3.0.0",
         "neverthrow": "^8.0.0",
         "pino": "^10.0.0",
@@ -211,9 +211,9 @@
 
     "@donations-etl/letter": ["@donations-etl/letter@workspace:packages/letter"],
 
-    "@donations-etl/letter-service": ["@donations-etl/letter-service@workspace:apps/letter-service"],
-
     "@donations-etl/runner": ["@donations-etl/runner@workspace:apps/runner"],
+
+    "@donations-etl/service": ["@donations-etl/service@workspace:apps/service"],
 
     "@donations-etl/types": ["@donations-etl/types@workspace:packages/types"],
 

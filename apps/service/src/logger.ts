@@ -1,5 +1,5 @@
 /**
- * Logger for the letter service.
+ * Logger for the service.
  */
 import pino from 'pino'
 import type { Config } from './config'

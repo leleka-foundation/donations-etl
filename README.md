@@ -52,7 +52,7 @@ donations-etl/
     letter/         # Donor confirmation letter generation (HTML/PDF)
   apps/
     runner/         # Main ETL pipeline runner (Cloud Run job)
-    letter-service/ # Slack bot for donor letter generation
+    service/         # Slack bot: donor letters, donation queries, reports
 ```
 
 Out of the box, we use Google BigQuery as the destination for data and we deploy to GCP. You can adjust these for yourself.

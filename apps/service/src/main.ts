@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Main entry point for the letter service.
+ * Main entry point for the service.
  *
  * Starts a Bun HTTP server that handles:
  * - GET /health — health check
