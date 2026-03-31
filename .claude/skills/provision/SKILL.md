@@ -214,8 +214,14 @@ Ask: "Do you want to enable a Slack bot that answers natural language questions 
 
 If yes:
 
-1. No additional API keys needed — the bot uses Google Vertex AI with the same GCP auth
-   as BigQuery.
+1. Enable the Generative Language API and create an API key:
+   ```bash
+   gcloud services enable generativelanguage.googleapis.com
+   gcloud services api-keys create --display-name="Donation Query Bot" \
+     --api-target=service=generativelanguage.googleapis.com
+   ```
+   Store the key in Secret Manager and mount as `GOOGLE_GENERATIVE_AI_API_KEY` on the
+   Cloud Run service.
 2. Ask which AI model to use (set `AGENT_MODEL` env var on the Cloud Run service):
    - Default: `gemini-3.1-flash-lite-preview`
    - Alternative: `gemini-2.5-flash` (more capable)

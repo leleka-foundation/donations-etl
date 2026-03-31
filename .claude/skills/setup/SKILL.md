@@ -263,14 +263,20 @@ If yes:
    - Go to the Slack app settings > OAuth & Permissions > add `app_mentions:read` scope
    - Go to Event Subscriptions > enable and subscribe to the `app_mention` bot event
    - Set the Request URL to `https://<service-url>/slack/events`
-2. No additional API keys needed — the bot uses Google Vertex AI with the same GCP
-   credentials as BigQuery. The Vertex AI API must be enabled in the project (provisioning
-   handles this).
+2. Enable the Generative Language API and create an API key:
+   ```bash
+   gcloud services enable generativelanguage.googleapis.com --project=$PROJECT_ID
+   gcloud services api-keys create \
+     --display-name="Donation Query Bot" \
+     --api-target=service=generativelanguage.googleapis.com \
+     --project=$PROJECT_ID
+   ```
+   Copy the `keyString` from the output and set `GOOGLE_GENERATIVE_AI_API_KEY` in `.env`.
 3. Ask which AI model to use for the query agent:
    - Default: `gemini-3.1-flash-lite-preview` (cheapest, fast)
    - Alternative: `gemini-2.5-flash` (more capable, slightly more expensive)
    - Set `AGENT_MODEL` in `.env` (leave empty to use the default)
-4. Ensure the GCP project has the Vertex AI API enabled:
+4. Ensure the Vertex AI API is also enabled (for BigQuery and other GCP services):
    ```bash
    gcloud services enable aiplatform.googleapis.com
    ```
