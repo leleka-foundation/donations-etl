@@ -55,6 +55,11 @@ async function main(): Promise<void> {
       ) {
         const body = await request.text()
 
+        // Reject Slack retries — we already processing the first attempt
+        if (request.headers.get('x-slack-retry-num')) {
+          return new Response('', { status: 200 })
+        }
+
         // Handle Slack url_verification challenge directly
         if (url.pathname === '/slack/events') {
           try {
