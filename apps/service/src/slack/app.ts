@@ -187,7 +187,97 @@ export function createSlackApp(config: Config, logger: Logger) {
   })
 
   app.assistant(assistant)
-  logger.info('Donation assistant registered')
+
+  // Also handle @mentions in channels for shared visibility
+  app.event('app_mention', async ({ event, client }) => {
+    const question = event.text.replace(/<@[A-Z0-9]+>/g, '').trim()
+
+    if (!question) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: 'Ask me a question about donations! For example: "How much did we raise this year?"',
+        thread_ts: event.thread_ts ?? event.ts,
+      })
+      return
+    }
+
+    // Add thinking reaction
+    try {
+      await client.reactions.add({
+        channel: event.channel,
+        timestamp: event.ts,
+        name: 'hourglass_flowing_sand',
+      })
+    } catch {
+      // Non-critical
+    }
+
+    const bqConfig = {
+      projectId: config.PROJECT_ID,
+      datasetRaw: 'donations_raw',
+      datasetCanon: config.DATASET_CANON,
+    }
+
+    // Build history from thread if this is a follow-up
+    const history: ConversationMessage[] = []
+    if (event.thread_ts) {
+      try {
+        const thread = await client.conversations.replies({
+          channel: event.channel,
+          ts: event.thread_ts,
+          limit: 20,
+        })
+        for (const msg of (thread.messages ?? []).slice(0, -1)) {
+          if (!msg.text) continue
+          if (msg.text.startsWith('_Generated SQL:_')) continue
+          history.push({
+            role: msg.bot_id ? 'assistant' : 'user',
+            content: msg.text.replace(/<@[A-Z0-9]+>/g, '').trim(),
+          })
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
+    logger.info(
+      { question, hasHistory: history.length > 0 },
+      'Running donation agent (channel mention)',
+    )
+
+    const result = await runDonationAgent(question, bqConfig, queryFn, history)
+    const replyTs = event.thread_ts ?? event.ts
+
+    if (result.isErr()) {
+      logger.error({ error: result.error, question }, 'Agent failed')
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: "I couldn't answer that question. Try rephrasing it or asking something simpler.",
+        thread_ts: replyTs,
+      })
+      return
+    }
+
+    const { text, sql } = result.value
+
+    logger.info({ question, sql, textLength: text.length }, 'Agent completed')
+
+    const mainMsg = await client.chat.postMessage({
+      channel: event.channel,
+      text,
+      thread_ts: replyTs,
+    })
+
+    if (sql && mainMsg.ts) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: `_Generated SQL:_\n\`\`\`${prettySql(sql)}\`\`\``,
+        thread_ts: mainMsg.ts,
+      })
+    }
+  })
+
+  logger.info('Donation assistant registered (DM + channel mentions)')
 
   return { app, receiver }
 }
