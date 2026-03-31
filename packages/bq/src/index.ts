@@ -53,14 +53,14 @@ export { generateReportSql } from './report-sql'
 // SQL safety
 export { ensureLimit, validateReadOnlySql } from './sql-safety'
 
-// NL2SQL
+// Donation agent
 export {
-  SqlResponseSchema,
-  buildSystemPrompt,
-  generateSql,
-  type NL2SqlError,
-  type SqlResponse,
-} from './nl2sql'
+  buildQueryFn,
+  runDonationAgent,
+  type AgentError,
+  type AgentResult,
+  type QueryFn,
+} from './donation-agent'
 
 // NDJSON utilities
 export {

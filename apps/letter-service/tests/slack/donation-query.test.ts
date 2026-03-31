@@ -12,9 +12,7 @@ import {
 
 const logger = pino({ level: 'silent' })
 
-type GenerateSqlFn = QueryHandlerDeps['generateSqlFn']
-type ExecuteReadOnlyQueryFn =
-  QueryHandlerDeps['bqClient']['executeReadOnlyQuery']
+type RunAgentFn = QueryHandlerDeps['runAgentFn']
 type PostMessageFn = QueryHandlerDeps['slackClient']['chat']['postMessage']
 type ReactionsAddFn = QueryHandlerDeps['slackClient']['reactions']['add']
 
@@ -40,17 +38,13 @@ describe('handleDonationQuery', () => {
     }
 
     deps = {
-      generateSqlFn: vi.fn<GenerateSqlFn>().mockReturnValue(
+      runAgentFn: vi.fn<RunAgentFn>().mockReturnValue(
         okAsync({
-          sql: "SELECT SUM(amount_cents)/100 AS total FROM `donations.events` WHERE status = 'succeeded'",
-          explanation: 'Total succeeded donations in dollars',
+          text: '*$15,000* total donations',
+          sql: "SELECT SUM(amount_cents)/100 FROM events WHERE status = 'succeeded'",
         }),
       ),
-      bqClient: {
-        executeReadOnlyQuery: vi
-          .fn<ExecuteReadOnlyQueryFn>()
-          .mockReturnValue(okAsync([{ total: 15000 }])),
-      },
+      queryFn: vi.fn<QueryHandlerDeps['queryFn']>(),
       slackClient: {
         reactions: {
           add: vi.fn<ReactionsAddFn>().mockResolvedValue({ ok: true }),
@@ -64,7 +58,7 @@ describe('handleDonationQuery', () => {
     }
   })
 
-  it('generates SQL, executes query, and posts results', async () => {
+  it('runs agent and posts formatted result', async () => {
     await handleDonationQuery(
       'How much did we raise?',
       'C123',
@@ -75,15 +69,13 @@ describe('handleDonationQuery', () => {
       deps,
     )
 
-    expect(deps.generateSqlFn).toHaveBeenCalledWith(
+    expect(deps.runAgentFn).toHaveBeenCalledWith(
       'How much did we raise?',
-      expect.objectContaining({
-        projectId: 'test-project',
-        datasetCanon: 'donations',
-      }),
+      expect.objectContaining({ projectId: 'test-project' }),
+      deps.queryFn,
     )
-    expect(deps.bqClient.executeReadOnlyQuery).toHaveBeenCalled()
-    expect(deps.slackClient.chat.postMessage).toHaveBeenCalled()
+    const calls = vi.mocked(deps.slackClient.chat.postMessage).mock.calls
+    expect(calls[0]?.[0]?.text).toContain('$15,000')
   })
 
   it('adds thinking reaction', async () => {
@@ -146,40 +138,15 @@ describe('handleDonationQuery', () => {
     )
 
     const calls = vi.mocked(deps.slackClient.chat.postMessage).mock.calls
-    // Second call should be the SQL thread reply
     expect(calls.length).toBe(2)
     expect(calls[1]?.[0]?.thread_ts).toBe('123.456')
-    expect(calls[1]?.[0]?.text).toBe('Generated SQL')
+    expect(calls[1]?.[0]?.text).toContain('Generated SQL')
   })
 
-  it('handles SQL generation failure', async () => {
-    deps.generateSqlFn = vi.fn<GenerateSqlFn>().mockReturnValue(
-      errAsync({
-        type: 'generation',
-        message: 'Model error',
-      }),
-    )
-
-    await handleDonationQuery(
-      'bad question',
-      'C123',
-      undefined,
-      '111.222',
-      config,
-      logger,
-      deps,
-    )
-
-    const calls = vi.mocked(deps.slackClient.chat.postMessage).mock.calls
-    expect(calls.length).toBe(1)
-    const text = calls[0]?.[0]?.text ?? ''
-    expect(text).toContain('Error')
-  })
-
-  it('handles query execution failure', async () => {
-    deps.bqClient.executeReadOnlyQuery = vi
-      .fn<ExecuteReadOnlyQueryFn>()
-      .mockReturnValue(errAsync({ type: 'query', message: 'BQ error' }))
+  it('skips SQL reply when agent returns no SQL', async () => {
+    deps.runAgentFn = vi
+      .fn<RunAgentFn>()
+      .mockReturnValue(okAsync({ text: 'I need more info', sql: null }))
 
     await handleDonationQuery(
       'test',
@@ -193,11 +160,9 @@ describe('handleDonationQuery', () => {
 
     const calls = vi.mocked(deps.slackClient.chat.postMessage).mock.calls
     expect(calls.length).toBe(1)
-    const text = calls[0]?.[0]?.text ?? ''
-    expect(text).toContain('Error')
   })
 
-  it('skips SQL thread reply when postMessage returns no ts', async () => {
+  it('skips SQL reply when postMessage returns no ts', async () => {
     deps.slackClient.chat.postMessage = vi
       .fn<PostMessageFn>()
       .mockResolvedValue({})
@@ -212,8 +177,27 @@ describe('handleDonationQuery', () => {
       deps,
     )
 
-    // Only one call (the main message), no SQL thread reply
     expect(deps.slackClient.chat.postMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('handles agent failure', async () => {
+    deps.runAgentFn = vi
+      .fn<RunAgentFn>()
+      .mockReturnValue(errAsync({ type: 'agent', message: 'Model error' }))
+
+    await handleDonationQuery(
+      'bad question',
+      'C123',
+      undefined,
+      '111.222',
+      config,
+      logger,
+      deps,
+    )
+
+    const calls = vi.mocked(deps.slackClient.chat.postMessage).mock.calls
+    expect(calls.length).toBe(1)
+    expect(calls[0]?.[0]?.text).toContain("couldn't answer")
   })
 
   it('continues when reaction add fails', async () => {
@@ -231,8 +215,7 @@ describe('handleDonationQuery', () => {
       deps,
     )
 
-    // Should still generate SQL and post results
-    expect(deps.generateSqlFn).toHaveBeenCalled()
+    expect(deps.runAgentFn).toHaveBeenCalled()
     expect(deps.slackClient.chat.postMessage).toHaveBeenCalled()
   })
 })

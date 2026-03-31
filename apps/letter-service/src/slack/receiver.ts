@@ -61,13 +61,17 @@ export class BunReceiver implements Receiver {
   async handleSlackRequest(
     body: string,
     headers: Record<string, string>,
+    errorHandler?: (error: unknown) => void,
   ): Promise<{ status: number; body: string }> {
     if (!this.bolt) {
       return { status: 500, body: 'Bolt not initialized' }
     }
 
     let responseBody = ''
-    let responseStatus = 200
+    let ackCalled = false
+
+    const { promise: ackPromise, resolve: resolveAck } =
+      Promise.withResolvers<void>()
 
     const ack: ReceiverEvent['ack'] = async (response) => {
       if (typeof response === 'string') {
@@ -75,6 +79,8 @@ export class BunReceiver implements Receiver {
       } else if (response) {
         responseBody = JSON.stringify(response)
       }
+      ackCalled = true
+      resolveAck()
     }
 
     const event: ReceiverEvent = {
@@ -82,14 +88,26 @@ export class BunReceiver implements Receiver {
       ack,
     }
 
-    try {
-      await this.bolt.processEvent(event)
-    } catch {
-      responseStatus = 500
-      responseBody = 'Internal Server Error'
+    // Start processing but don't await completion — only wait for ack.
+    // This allows long-running handlers (e.g., AI + BigQuery) to continue
+    // in the background while we return 200 to Slack immediately.
+    const processPromise = this.bolt.processEvent(event).catch((error) => {
+      if (errorHandler) {
+        errorHandler(error)
+      }
+    })
+
+    // Wait for either ack() to be called or processing to complete
+    await Promise.race([ackPromise, processPromise])
+
+    // If ack was never called (e.g., processing completed without ack),
+    // still return 200 to prevent Slack retries
+    /* istanbul ignore next -- @preserve defensive: Bolt always calls ack */
+    if (!ackCalled) {
+      return { status: 200, body: '' }
     }
 
-    return { status: responseStatus, body: responseBody }
+    return { status: 200, body: responseBody }
   }
 }
 

@@ -1,7 +1,11 @@
 /**
  * Slack Bolt App initialization and command/view registration.
  */
-import { BigQueryClient, generateSql } from '@donations-etl/bq'
+import {
+  BigQueryClient,
+  buildQueryFn,
+  runDonationAgent,
+} from '@donations-etl/bq'
 import { App } from '@slack/bolt'
 import type { Logger } from 'pino'
 import type { Config } from '../config'
@@ -101,8 +105,8 @@ export function createSlackApp(config: Config, logger: Logger) {
         config,
         logger,
         {
-          generateSqlFn: generateSql,
-          bqClient,
+          runAgentFn: runDonationAgent,
+          queryFn: buildQueryFn(bqClient.executeReadOnlyQuery.bind(bqClient)),
           slackClient: client,
         },
       )

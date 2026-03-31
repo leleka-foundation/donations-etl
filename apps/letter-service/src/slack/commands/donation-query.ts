@@ -1,29 +1,30 @@
 /**
  * Donation query handler for Slack app_mention events.
  *
- * Translates natural language questions about donations into SQL,
- * executes against BigQuery, and posts formatted results.
+ * Uses an agentic loop to translate natural language questions
+ * into SQL, execute against BigQuery, and format results for Slack.
  */
 import type {
-  BigQueryClient,
+  AgentError,
+  AgentResult,
   BigQueryConfig,
-  generateSql,
+  QueryFn,
 } from '@donations-etl/bq'
+import type { ResultAsync } from 'neverthrow'
 import type { Logger } from 'pino'
 import type { Config } from '../../config'
-import { formatQueryError, formatQueryResult } from '../formatters/query-result'
+import { prettySql } from '../formatters/query-result'
 
 /**
  * Dependencies for the query handler, injectable for testing.
  */
 export interface QueryHandlerDeps {
-  generateSqlFn: typeof generateSql
-  bqClient: {
-    executeReadOnlyQuery: (
-      sql: string,
-      maxBytes?: number,
-    ) => ReturnType<BigQueryClient['executeReadOnlyQuery']>
-  }
+  runAgentFn: (
+    question: string,
+    config: BigQueryConfig,
+    queryFn: QueryFn,
+  ) => ResultAsync<AgentResult, AgentError>
+  queryFn: QueryFn
   slackClient: {
     reactions: {
       add: (args: {
@@ -35,7 +36,6 @@ export interface QueryHandlerDeps {
     chat: {
       postMessage: (args: {
         channel: string
-        blocks: unknown[]
         text: string
         thread_ts?: string
       }) => Promise<{ ts?: string }>
@@ -55,7 +55,7 @@ export async function handleDonationQuery(
   logger: Logger,
   deps: QueryHandlerDeps,
 ): Promise<void> {
-  const { generateSqlFn, bqClient, slackClient } = deps
+  const { runAgentFn, queryFn, slackClient } = deps
 
   // Add "thinking" reaction
   try {
@@ -74,68 +74,38 @@ export async function handleDonationQuery(
     datasetCanon: config.DATASET_CANON,
   }
 
-  // Generate SQL from the question
-  const sqlResult = await generateSqlFn(question, bqConfig)
+  logger.info({ question }, 'Running donation agent')
 
-  if (sqlResult.isErr()) {
-    logger.error({ error: sqlResult.error, question }, 'Failed to generate SQL')
-    const errorResponse = formatQueryError(
-      'I had trouble understanding that question. Try rephrasing it.',
-    )
-    await slackClient.chat.postMessage({
-      channel,
-      blocks: errorResponse.blocks,
-      text: errorResponse.text,
-      thread_ts: threadTs ?? eventTs,
-    })
-    return
-  }
-
-  const { sql, explanation } = sqlResult.value
-
-  logger.info({ question, sql, explanation }, 'Generated SQL from question')
-
-  // Execute the query
-  const queryResult = await bqClient.executeReadOnlyQuery(sql)
-
-  if (queryResult.isErr()) {
-    logger.error({ error: queryResult.error, sql }, 'Failed to execute query')
-    const errorResponse = formatQueryError(
-      'The query failed to execute. The question might be too complex or the data might not support it.',
-    )
-    await slackClient.chat.postMessage({
-      channel,
-      blocks: errorResponse.blocks,
-      text: errorResponse.text,
-      thread_ts: threadTs ?? eventTs,
-    })
-    return
-  }
-
-  const rows = queryResult.value
-
-  logger.info(
-    { question, rowCount: rows.length },
-    'Query executed successfully',
-  )
-
-  // Format and post results
-  const response = formatQueryResult(rows, explanation, sql)
+  const result = await runAgentFn(question, bqConfig, queryFn)
   const replyTs = threadTs ?? eventTs
 
+  if (result.isErr()) {
+    logger.error({ error: result.error, question }, 'Agent failed')
+    await slackClient.chat.postMessage({
+      channel,
+      text: "I couldn't answer that question. Try rephrasing it or asking something simpler.",
+      thread_ts: replyTs,
+    })
+    return
+  }
+
+  const { text, sql } = result.value
+
+  logger.info({ question, sql, textLength: text.length }, 'Agent completed')
+
+  // Post the formatted answer
   const mainMsg = await slackClient.chat.postMessage({
     channel,
-    blocks: response.blocks,
-    text: response.text,
+    text,
     thread_ts: replyTs,
   })
 
   // Post SQL as thread reply
-  if (response.threadBlocks.length > 0 && mainMsg.ts) {
+  if (sql && mainMsg.ts) {
+    const formatted = prettySql(sql)
     await slackClient.chat.postMessage({
       channel,
-      blocks: response.threadBlocks,
-      text: 'Generated SQL',
+      text: `_Generated SQL:_\n\`\`\`${formatted}\`\`\``,
       thread_ts: mainMsg.ts,
     })
   }

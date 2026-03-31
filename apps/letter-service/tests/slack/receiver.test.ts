@@ -160,15 +160,55 @@ describe('BunReceiver', () => {
       expect(result.body).toBe('')
     })
 
-    it('returns 500 when processEvent throws', async () => {
+    it('calls error handler when processEvent throws', async () => {
+      const mockProcessEvent = vi.fn<(event: unknown) => Promise<void>>()
+      mockProcessEvent.mockRejectedValue(new Error('Processing failed'))
+      receiver.init({ processEvent: mockProcessEvent })
+
+      const errorHandler = vi.fn<(error: unknown) => void>()
+      const result = await receiver.handleSlackRequest('{}', {}, errorHandler)
+
+      expect(result.status).toBe(200) // Always return 200 to prevent retries
+      expect(errorHandler).toHaveBeenCalledWith(expect.any(Error))
+    })
+
+    it('returns 200 even when processEvent throws without error handler', async () => {
       const mockProcessEvent = vi.fn<(event: unknown) => Promise<void>>()
       mockProcessEvent.mockRejectedValue(new Error('Processing failed'))
       receiver.init({ processEvent: mockProcessEvent })
 
       const result = await receiver.handleSlackRequest('{}', {})
 
-      expect(result.status).toBe(500)
-      expect(result.body).toBe('Internal Server Error')
+      expect(result.status).toBe(200)
+    })
+
+    it('returns 200 immediately after ack even if handler continues', async () => {
+      const mockProcessEvent =
+        vi.fn<
+          (event: {
+            body: unknown
+            ack: (response?: unknown) => Promise<void>
+          }) => Promise<void>
+        >()
+
+      let resolveHandler: () => void
+      const handlerPromise = new Promise<void>((resolve) => {
+        resolveHandler = resolve
+      })
+
+      mockProcessEvent.mockImplementation(async (event) => {
+        await event.ack() // Ack immediately
+        await handlerPromise // Simulate slow async work
+      })
+      receiver.init({ processEvent: mockProcessEvent })
+
+      const result = await receiver.handleSlackRequest('{}', {})
+
+      // Should return immediately after ack, not wait for handler
+      expect(result.status).toBe(200)
+
+      // Clean up: resolve the handler
+      resolveHandler!() // eslint-disable-line @typescript-eslint/no-non-null-assertion
     })
 
     it('defaults to empty content-type', async () => {

@@ -55,11 +55,6 @@ async function main(): Promise<void> {
       ) {
         const body = await request.text()
 
-        // Reject Slack retries — we already processing the first attempt
-        if (request.headers.get('x-slack-retry-num')) {
-          return new Response('', { status: 200 })
-        }
-
         // Handle Slack url_verification challenge directly
         if (url.pathname === '/slack/events') {
           try {
@@ -85,7 +80,13 @@ async function main(): Promise<void> {
           headers[key] = value
         })
 
-        const result = await receiver.handleSlackRequest(body, headers)
+        const result = await receiver.handleSlackRequest(
+          body,
+          headers,
+          (error) => {
+            logger.error({ error }, 'Slack event handler error')
+          },
+        )
         return new Response(result.body, {
           status: result.status,
           headers: { 'Content-Type': 'application/json' },
