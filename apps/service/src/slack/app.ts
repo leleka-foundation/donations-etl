@@ -152,7 +152,11 @@ export function createSlackApp(config: Config, logger: Logger) {
         bqConfig,
         queryFn,
         history,
-        { model: config.AGENT_MODEL, orgName: config.ORG_NAME },
+        {
+          model: config.AGENT_MODEL,
+          orgName: config.ORG_NAME,
+          apiKey: config.GOOGLE_GENERATIVE_AI_API_KEY,
+        },
       )
 
       if (result.isErr()) {

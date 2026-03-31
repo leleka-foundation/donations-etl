@@ -20,7 +20,8 @@ export const ConfigSchema = z.object({
   // Auth
   SERVICE_API_KEY: z.string(),
 
-  // AI model for donation query agent (Vertex AI model ID)
+  // AI
+  GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
   AGENT_MODEL: z.string().optional(),
 
   // Slack

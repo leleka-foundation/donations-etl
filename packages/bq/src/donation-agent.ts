@@ -8,7 +8,7 @@
  * The agent can self-correct: if a query fails, it sees the error
  * and can retry with fixed SQL.
  */
-import { createVertex } from '@ai-sdk/google-vertex'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { ToolLoopAgent, stepCountIs, tool } from 'ai'
 import { ResultAsync, errAsync, okAsync } from 'neverthrow'
 import { z } from 'zod'
@@ -26,7 +26,7 @@ export interface AgentError {
 /**
  * Default model for the donation agent.
  */
-const DEFAULT_AGENT_MODEL = 'gemini-2.5-flash-lite'
+const DEFAULT_AGENT_MODEL = 'gemini-3.1-flash-lite-preview'
 
 /**
  * Maximum agent steps (SQL generation + execution + formatting).
@@ -142,15 +142,14 @@ Formatting guidelines:
 export function createDonationAgent(
   config: BigQueryConfig,
   queryFn: QueryFn,
-  options?: { model?: string; orgName?: string },
+  options?: { model?: string; orgName?: string; apiKey?: string },
 ) {
-  const vertex = createVertex({
-    project: config.projectId,
-    location: 'us-central1',
+  const google = createGoogleGenerativeAI({
+    apiKey: options?.apiKey,
   })
 
   return new ToolLoopAgent({
-    model: vertex(options?.model ?? DEFAULT_AGENT_MODEL),
+    model: google(options?.model ?? DEFAULT_AGENT_MODEL),
     instructions: buildAgentPrompt(config, { orgName: options?.orgName }),
     tools: {
       query_bigquery: tool({
@@ -228,7 +227,7 @@ export function runDonationAgent(
   config: BigQueryConfig,
   queryFn: QueryFn,
   history?: ConversationMessage[],
-  options?: { model?: string; orgName?: string },
+  options?: { model?: string; orgName?: string; apiKey?: string },
 ): ResultAsync<AgentResult, AgentError> {
   const agent = createDonationAgent(config, queryFn, options)
 

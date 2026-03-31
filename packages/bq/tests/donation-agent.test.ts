@@ -22,9 +22,8 @@ import type { BigQueryConfig } from '../src/types'
  */
 let mockModel: MockLanguageModelV3
 
-vi.mock('@ai-sdk/google-vertex', () => ({
-  createVertex: () => () => {
-    // Return the current mockModel — tests set this before calling the agent
+vi.mock('@ai-sdk/google', () => ({
+  createGoogleGenerativeAI: () => () => {
     return mockModel
   },
 }))
