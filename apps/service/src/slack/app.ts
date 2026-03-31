@@ -246,17 +246,17 @@ export function createSlackApp(config: Config, logger: Logger) {
 
     logger.info({ question, sql, textLength: text.length }, 'Agent completed')
 
-    const mainMsg = await client.chat.postMessage({
+    await client.chat.postMessage({
       channel: event.channel,
       text,
       thread_ts: replyTs,
     })
 
-    if (sql && mainMsg.ts) {
+    if (sql) {
       await client.chat.postMessage({
         channel: event.channel,
         text: `_Generated SQL:_\n\`\`\`${prettySql(sql)}\`\`\``,
-        thread_ts: mainMsg.ts,
+        thread_ts: replyTs,
       })
     }
   })
