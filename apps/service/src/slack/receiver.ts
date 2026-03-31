@@ -70,8 +70,10 @@ export class BunReceiver implements Receiver {
     let responseBody = ''
     let ackCalled = false
 
-    const { promise: ackPromise, resolve: resolveAck } =
-      Promise.withResolvers<void>()
+    let resolveAck: () => void
+    const ackPromise = new Promise<void>((resolve) => {
+      resolveAck = resolve
+    })
 
     const ack: ReceiverEvent['ack'] = async (response) => {
       if (typeof response === 'string') {
