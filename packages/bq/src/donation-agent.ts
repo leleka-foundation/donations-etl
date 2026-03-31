@@ -26,7 +26,7 @@ export interface AgentError {
 /**
  * Default model for the donation agent.
  */
-const DEFAULT_AGENT_MODEL = 'gemini-3.1-flash-lite-preview'
+const DEFAULT_AGENT_MODEL = 'gemini-2.5-flash-lite'
 
 /**
  * Maximum agent steps (SQL generation + execution + formatting).
