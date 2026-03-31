@@ -76,6 +76,22 @@ describe('buildAgentPrompt', () => {
     const prompt = buildAgentPrompt({ ...config, datasetCanon: 'my_data' })
     expect(prompt).toContain('`my_data.events`')
   })
+
+  it('includes current date', () => {
+    const prompt = buildAgentPrompt(config)
+    const today = new Date().toISOString().split('T')[0]
+    expect(prompt).toContain(today)
+  })
+
+  it('includes org name when provided', () => {
+    const prompt = buildAgentPrompt(config, { orgName: 'Leleka Foundation' })
+    expect(prompt).toContain('Leleka Foundation')
+  })
+
+  it('uses generic label when org name not provided', () => {
+    const prompt = buildAgentPrompt(config)
+    expect(prompt).toContain('a nonprofit organization')
+  })
 })
 
 describe('buildQueryFn', () => {

@@ -47,9 +47,17 @@ export type QueryFn = (
 /**
  * Build the system prompt for the donation agent.
  */
-export function buildAgentPrompt(config: BigQueryConfig): string {
-  return `You are a donation data assistant for a nonprofit organization. You answer questions
+export function buildAgentPrompt(
+  config: BigQueryConfig,
+  context?: { orgName?: string },
+): string {
+  const orgLabel = context?.orgName ?? 'a nonprofit organization'
+  const today = new Date().toISOString().split('T')[0]
+
+  return `You are a donation data assistant for ${orgLabel}. You answer questions
 about donations by querying a BigQuery database and presenting the results.
+
+Today's date is ${today}.
 
 ## How You Work
 
@@ -134,7 +142,7 @@ Formatting guidelines:
 export function createDonationAgent(
   config: BigQueryConfig,
   queryFn: QueryFn,
-  model?: string,
+  options?: { model?: string; orgName?: string },
 ) {
   const vertex = createVertex({
     project: config.projectId,
@@ -142,8 +150,8 @@ export function createDonationAgent(
   })
 
   return new ToolLoopAgent({
-    model: vertex(model ?? DEFAULT_AGENT_MODEL),
-    instructions: buildAgentPrompt(config),
+    model: vertex(options?.model ?? DEFAULT_AGENT_MODEL),
+    instructions: buildAgentPrompt(config, { orgName: options?.orgName }),
     tools: {
       query_bigquery: tool({
         description:
@@ -220,9 +228,9 @@ export function runDonationAgent(
   config: BigQueryConfig,
   queryFn: QueryFn,
   history?: ConversationMessage[],
-  model?: string,
+  options?: { model?: string; orgName?: string },
 ): ResultAsync<AgentResult, AgentError> {
-  const agent = createDonationAgent(config, queryFn, model)
+  const agent = createDonationAgent(config, queryFn, options)
 
   // Build the generate args: use messages for multi-turn, prompt for single-turn
   const generateArgs =
