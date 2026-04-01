@@ -207,21 +207,22 @@ If yes:
 1. Guide them through creating a Slack app:
    - Go to https://api.slack.com/apps > Create New App
    - Choose "From scratch"
-   - Name it (e.g., "Donor Letters") and select the workspace
+   - Ask the user what they want to name their bot (e.g., "DonorBot", "Donations Assistant")
+   - Name the app accordingly and select the workspace
    - Under "OAuth & Permissions", add scopes: `chat:write`, `files:write`, `commands`, `im:write`
-   - Under "Slash Commands", create `/donor-letter` pointing to the letter service URL
+   - Under "Slash Commands", create `/donor-letter` pointing to the service URL
    - Under "Interactivity & Shortcuts", enable and set the Request URL
    - Install the app to the workspace
 2. Ask for:
    - `SLACK_BOT_TOKEN` (starts with `xoxb-`)
    - `SLACK_SIGNING_SECRET` (from Basic Information page)
-3. Ask for `LETTER_SERVICE_API_KEY` (any strong random string for REST API auth)
+3. Ask for `SERVICE_API_KEY` (any strong random string for REST API auth)
 4. Update `.env`
 
 If no:
 
 - Tell the user: "Slack integration skipped. You can still generate letters via the REST API or the /donor-letter Claude skill."
-- Set a placeholder for `LETTER_SERVICE_API_KEY` if they want the REST API
+- Set a placeholder for `SERVICE_API_KEY` if they want the REST API
 
 ## Step 7: Donation Reports (Optional)
 
@@ -250,7 +251,42 @@ If no:
 - Tell the user: "Reports skipped. You can enable them later by setting `REPORT_SLACK_CHANNEL`
   in `.env` and re-running `/provision`."
 
-## Step 8: Install Dependencies (if not already done)
+## Step 8: Donation Query Bot (Optional)
+
+Ask: "Do you want to enable a Slack bot that answers natural language questions about donations?
+Users can @mention the bot in any channel and ask questions like 'How much did we raise this
+year?' or 'Who are our top donors?'"
+
+If yes:
+
+1. The Slack bot token from Step 6 is reused. The bot also needs the `app_mentions:read` scope:
+   - Go to the Slack app settings > OAuth & Permissions > add `app_mentions:read` scope
+   - Go to Event Subscriptions > enable and subscribe to the `app_mention` bot event
+   - Set the Request URL to `https://<service-url>/slack/events`
+2. Enable the Generative Language API and create an API key:
+   ```bash
+   gcloud services enable generativelanguage.googleapis.com --project=$PROJECT_ID
+   gcloud services api-keys create \
+     --display-name="Donation Query Bot" \
+     --api-target=service=generativelanguage.googleapis.com \
+     --project=$PROJECT_ID
+   ```
+   Copy the `keyString` from the output and set `GOOGLE_GENERATIVE_AI_API_KEY` in `.env`.
+3. Ask which AI model to use for the query agent:
+   - Default: `gemini-3.1-flash-lite-preview` (cheapest, fast)
+   - Alternative: `gemini-2.5-flash` (more capable, slightly more expensive)
+   - Set `AGENT_MODEL` in `.env` (leave empty to use the default)
+4. Ensure the Vertex AI API is also enabled (for BigQuery and other GCP services):
+   ```bash
+   gcloud services enable aiplatform.googleapis.com
+   ```
+
+If no:
+
+- Tell the user: "Query bot skipped. The `app_mention` handler is always registered in the
+  service. To enable it, configure Event Subscriptions in the Slack app settings."
+
+## Step 9: Install Dependencies (if not already done)
 
 If dependencies haven't been installed yet (e.g., running `/setup` standalone without
 `/bootstrap`):
@@ -259,7 +295,7 @@ If dependencies haven't been installed yet (e.g., running `/setup` standalone wi
 bun install
 ```
 
-## Step 9: Verify Configuration
+## Step 10: Verify Configuration
 
 Run a quick check:
 
@@ -271,7 +307,7 @@ bun test:run
 
 Report results to the user. If tests fail, help debug.
 
-## Step 10: Provision GCP Infrastructure (Optional)
+## Step 11: Provision GCP Infrastructure (Optional)
 
 Ask: "Would you like to provision GCP infrastructure now?"
 
@@ -290,7 +326,7 @@ If no:
 - Tell the user they can run `dotenvx run -- ./infra/provision.sh` later
 - Or use the `/provision` skill
 
-## Step 11: Summary
+## Step 12: Summary
 
 Print a summary of what was configured:
 
@@ -300,6 +336,7 @@ Print a summary of what was configured:
 - Slack: enabled/disabled
 - Letter service: configured/not configured
 - Reports: enabled/disabled (if enabled, show channel and schedules)
+- Query bot: enabled/disabled
 
 Suggest next steps:
 

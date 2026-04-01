@@ -1,0 +1,23 @@
+{
+  "skill_name": "slack-bot",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a /status slash command that shows the last ETL run status from BigQuery",
+      "expected_output": "Creates a slash command handler following the existing pattern in commands/, registers it in app.ts, queries BigQuery for the latest run, and formats the result for Slack",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I want users to be able to react with :receipt: on a message and have the bot DM them a summary of that message",
+      "expected_output": "Adds a reaction_added event handler, explains the required scopes (reactions:read, im:write, channels:history), fetches the message content, and sends a DM",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Add a weekly digest that posts to a channel every Monday with a summary of new donors",
+      "expected_output": "Explains that proactive messaging needs a scheduled trigger (Cloud Scheduler or cron), not an event handler. Shows how to use chat.postMessage with a channel ID, references the report pattern from apps/runner",
+      "files": []
+    }
+  ]
+}

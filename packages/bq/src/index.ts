@@ -44,11 +44,25 @@ export {
   generateInsertRunSql,
   generateMergeSql,
   generateUpdateRunSql,
+  generateUpdateSourceCoverageSql,
   generateUpsertWatermarkSql,
 } from './sql'
 
 // Report SQL
 export { generateReportSql } from './report-sql'
+
+// SQL safety
+export { ensureLimit, validateReadOnlySql } from './sql-safety'
+
+// Donation agent
+export {
+  buildQueryFn,
+  runDonationAgent,
+  type AgentError,
+  type AgentResult,
+  type ConversationMessage,
+  type QueryFn,
+} from './donation-agent'
 
 // NDJSON utilities
 export {

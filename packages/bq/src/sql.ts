@@ -21,22 +21,27 @@ export function generateMergeSql(config: BigQueryConfig): string {
   return `
 MERGE \`${datasetCanon}.events\` AS target
 USING (
-  SELECT * EXCEPT(row_num) FROM (
-    SELECT *,
-      ROW_NUMBER() OVER (PARTITION BY source, external_id ORDER BY ingested_at DESC) AS row_num
-    FROM \`${datasetRaw}.stg_events\`
-    WHERE run_id = @run_id
+  SELECT * EXCEPT(row_num, _sc_matched) FROM (
+    SELECT stg.*, sc.source IS NOT NULL AS _sc_matched,
+      ROW_NUMBER() OVER (PARTITION BY stg.source, stg.external_id ORDER BY stg.ingested_at DESC) AS row_num
+    FROM \`${datasetRaw}.stg_events\` AS stg
+    LEFT JOIN \`${datasetRaw}.source_coverage\` AS sc
+      ON stg.source = 'mercury'
+      AND sc.source != 'mercury'
+      AND LOWER(stg.description) LIKE CONCAT(LOWER(sc.source), ';%')
+      AND stg.event_ts >= sc.covers_from
+    WHERE stg.run_id = @run_id
       -- Mercury-specific filtering: only external incoming donations
-      -- Note: Account-level filtering is intentionally not implemented here.
-      -- Mercury account names are masked (e.g., "Mercury Checking ••9832") and
-      -- don't match user-friendly names. All accounts are included for now.
       AND NOT (
-        source = 'mercury'
+        stg.source = 'mercury'
         AND (
-          payment_method = 'internal'  -- Exclude internal transfers
-          -- JSON_VALUE returns strings, so we compare against 'false' (string)
-          OR JSON_VALUE(source_metadata, '$.isCredit') = 'false'  -- Exclude debits
-          OR payment_method = 'check'  -- Exclude checks (tracked via check_deposits source)
+          stg.payment_method = 'internal'  -- Exclude internal transfers
+          OR JSON_VALUE(stg.source_metadata, '$.isCredit') = 'false'  -- Exclude debits
+          OR stg.payment_method = 'check'  -- Exclude checks (tracked via check_deposits source)
+          -- Exclude platform disbursements when we have that source's own data.
+          -- _sc_matched is true when description matches a covered source and
+          -- the event is after that source's coverage start date.
+          OR sc.source IS NOT NULL
         )
       )
   )
@@ -147,4 +152,32 @@ SELECT run_id, mode, status, started_at, completed_at, from_ts, to_ts, metrics, 
 FROM \`${datasetRaw}.etl_runs\`
 WHERE run_id = @run_id
 LIMIT 1`.trim()
+}
+
+/**
+ * Generate SQL to update source coverage from canonical data.
+ *
+ * Computes MIN(event_ts) per non-mercury source and upserts into
+ * source_coverage. This runs after each merge to keep coverage dates
+ * current as new sources are added or backfills extend coverage.
+ */
+export function generateUpdateSourceCoverageSql(
+  config: BigQueryConfig,
+): string {
+  const { datasetRaw, datasetCanon } = config
+
+  return `
+MERGE \`${datasetRaw}.source_coverage\` AS target
+USING (
+  SELECT source, MIN(event_ts) AS covers_from
+  FROM \`${datasetCanon}.events\`
+  WHERE status = 'succeeded' AND source != 'mercury'
+  GROUP BY source
+) AS src
+ON target.source = src.source
+WHEN MATCHED AND target.covers_from != src.covers_from THEN UPDATE SET
+  covers_from = src.covers_from,
+  updated_at = CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (source, covers_from)
+  VALUES (src.source, src.covers_from)`.trim()
 }

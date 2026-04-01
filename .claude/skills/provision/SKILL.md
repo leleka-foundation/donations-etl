@@ -208,7 +208,33 @@ If yes:
 
 If no: skip. Reports can be enabled later by setting `REPORT_SLACK_CHANNEL` and re-provisioning.
 
-### Step 8: Post-Provisioning Verification
+### Step 8: Donation Query Bot (Optional)
+
+Ask: "Do you want to enable a Slack bot that answers natural language questions about donations?"
+
+If yes:
+
+1. Enable the Generative Language API and create an API key:
+   ```bash
+   gcloud services enable generativelanguage.googleapis.com
+   gcloud services api-keys create --display-name="Donation Query Bot" \
+     --api-target=service=generativelanguage.googleapis.com
+   ```
+   Store the key in Secret Manager and mount as `GOOGLE_GENERATIVE_AI_API_KEY` on the
+   Cloud Run service.
+2. Ask which AI model to use (set `AGENT_MODEL` env var on the Cloud Run service):
+   - Default: `gemini-3.1-flash-lite-preview`
+   - Alternative: `gemini-2.5-flash` (more capable)
+3. The Slack app needs the `app_mentions:read` scope and Event Subscriptions:
+   - Go to Slack app settings > OAuth & Permissions > add `app_mentions:read`
+   - Go to Event Subscriptions > enable > subscribe to `app_mention` bot event
+   - Set Request URL to `https://<service-url>/slack/events`
+4. Provisioning automatically creates a read-only BigQuery service account (`donations-etl-query-sa`)
+   with only `bigquery.dataViewer` and `bigquery.jobUser` permissions
+
+If no: skip. The query bot activates automatically when `AI_GATEWAY_API_KEY` is set.
+
+### Step 9: Post-Provisioning Verification
 
 After provisioning completes:
 

@@ -5,10 +5,17 @@ export default defineConfig({
     noExternal: ['zod'],
   },
   test: {
+    exclude: ['*-workspace/**', '**/node_modules/**'],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'html'],
-      exclude: ['node_modules/**', 'dist/**', '**/*.test.ts', '**/tests/**'],
+      exclude: [
+        'node_modules/**',
+        'dist/**',
+        '**/*.test.ts',
+        '**/tests/**',
+        '*-workspace/**',
+      ],
       thresholds: {
         statements: 100,
         branches: 100,

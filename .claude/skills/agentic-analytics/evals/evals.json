@@ -1,0 +1,23 @@
+{
+  "skill_name": "agentic-analytics",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a tool that lets users ask questions about our ETL run history — things like 'how many runs failed last week' or 'show me the slowest runs'",
+      "expected_output": "Creates a new agent with a different system prompt (etl_runs schema), reuses the ToolLoopAgent pattern and sql-safety module, adds a new query tool pointing at the etl_runs table",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I want to add a second data source — a PostgreSQL database with customer info. Users should be able to ask questions that join across both BigQuery and Postgres",
+      "expected_output": "Explains that multi-source joins require either federated queries (BigQuery external connections) or a multi-tool agent with separate query tools for each database. Recommends the appropriate approach.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "The bot sometimes generates SQL that references columns that don't exist. How do I fix this?",
+      "expected_output": "Points to the system prompt as the fix — improve column descriptions, add more few-shot examples, or add explicit 'do not use these column names' rules. Also mentions the agent self-corrects on query errors.",
+      "files": []
+    }
+  ]
+}
