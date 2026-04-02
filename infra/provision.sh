@@ -31,9 +31,11 @@ DATASET_CANON="${DATASET_CANON:-donations}"
 
 RUNTIME_SA="${RUNTIME_SA:-donations-etl-sa}"
 SCHEDULER_SA="${SCHEDULER_SA:-donations-etl-scheduler-sa}"
+QUERY_SA="${QUERY_SA:-donations-etl-query-sa}"
 
 RUNTIME_SA_EMAIL="${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 SCHEDULER_SA_EMAIL="${SCHEDULER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+QUERY_SA_EMAIL="${QUERY_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 SCHEDULER_JOB_NAME="${SCHEDULER_JOB_NAME:-${JOB_NAME}-daily}"
 SCHEDULE="${SCHEDULE:-0 9 * * *}"
@@ -151,11 +153,16 @@ ensure_sa_role_on_sa() {
 ensure_iam() {
   log "Ensuring IAM bindings..."
 
-  # Runtime SA: BigQuery jobs + edit data, read secrets, write to bucket
+  # Runtime SA: BigQuery jobs + edit data, read secrets, write to bucket, Vertex AI
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/bigquery.jobUser"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/bigquery.dataEditor"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/secretmanager.secretAccessor"
   ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/storage.objectAdmin"
+  ensure_project_role "serviceAccount:${RUNTIME_SA_EMAIL}" "roles/aiplatform.user"
+
+  # Query SA: read-only BigQuery access (for donation query bot)
+  ensure_project_role "serviceAccount:${QUERY_SA_EMAIL}" "roles/bigquery.jobUser"
+  ensure_project_role "serviceAccount:${QUERY_SA_EMAIL}" "roles/bigquery.dataViewer"
 
   # Scheduler SA: permission to run Cloud Run Jobs
   ensure_project_role "serviceAccount:${SCHEDULER_SA_EMAIL}" "roles/run.developer"
@@ -218,7 +225,7 @@ ensure_secrets() {
     ensure_secret "WISE_TOKEN" "SECRET_WISE_TOKEN"
   fi
 
-  # Optional: Slack Bot Token (for reports and letter service)
+  # Optional: Slack Bot Token (for reports and service)
   if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
     ensure_secret "SLACK_BOT_TOKEN" "SLACK_BOT_TOKEN"
   fi
@@ -470,6 +477,7 @@ main() {
 
   ensure_service_account "${RUNTIME_SA}" "${RUNTIME_SA_EMAIL}" "Donations ETL runtime"
   ensure_service_account "${SCHEDULER_SA}" "${SCHEDULER_SA_EMAIL}" "Donations ETL scheduler"
+  ensure_service_account "${QUERY_SA}" "${QUERY_SA_EMAIL}" "Donations ETL query (read-only)"
   ensure_iam
 
   ensure_secrets

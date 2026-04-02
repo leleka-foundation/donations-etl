@@ -38,3 +38,6 @@ data
 
 # skill eval workspaces (generated artifacts)
 *-workspace/
+
+# Skill eval workspaces
+*-workspace/

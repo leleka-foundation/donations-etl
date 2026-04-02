@@ -23,8 +23,10 @@ import {
   generateInsertRunSql,
   generateMergeSql,
   generateUpdateRunSql,
+  generateUpdateSourceCoverageSql,
   generateUpsertWatermarkSql,
 } from './sql'
+import { ensureLimit, validateReadOnlySql } from './sql-safety'
 import {
   EtlRunSchema,
   ReportRowSchema,
@@ -439,6 +441,21 @@ export class BigQueryClient {
   }
 
   /**
+   * Update source coverage dates after a merge.
+   *
+   * Computes MIN(event_ts) per non-mercury source and upserts into
+   * source_coverage. This keeps the disbursement deduplication filter
+   * current as new sources are added or backfills extend coverage.
+   */
+  updateSourceCoverage(): ResultAsync<void, BigQueryError> {
+    const sql = generateUpdateSourceCoverageSql(this.config)
+
+    return ResultAsync.fromPromise(this.bq.query({ query: sql }), (error) =>
+      createError('query', 'Failed to update source coverage', error),
+    ).map(() => undefined)
+  }
+
+  /**
    * Query donation report aggregations for a date range.
    *
    * Returns totals, breakdown by source, campaign, and amount range.
@@ -458,6 +475,33 @@ export class BigQueryClient {
       const validated = z.array(ReportRowSchema).parse(rows)
       return parseReportRows(validated)
     })
+  }
+
+  /**
+   * Execute a read-only SQL query with safety guardrails.
+   *
+   * - Rejects non-SELECT statements (DDL/DML)
+   * - Appends LIMIT if not present
+   * - Caps bytes billed to prevent runaway costs
+   */
+  executeReadOnlyQuery(
+    sql: string,
+    maxBytes: number = 100 * 1024 * 1024, // 100MB default
+  ): ResultAsync<Record<string, unknown>[], BigQueryError> {
+    const validationError = validateReadOnlySql(sql)
+    if (validationError) {
+      return errAsync(createError('query', validationError))
+    }
+
+    const limitedSql = ensureLimit(sql)
+
+    return ResultAsync.fromPromise(
+      this.bq.query({
+        query: limitedSql,
+        maximumBytesBilled: String(maxBytes),
+      }),
+      (error) => createError('query', 'Query execution failed', error),
+    ).map(([rows]) => z.array(z.record(z.string(), z.unknown())).parse(rows))
   }
 
   /**
