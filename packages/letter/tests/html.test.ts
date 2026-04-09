@@ -343,6 +343,13 @@ describe('renderHtml', () => {
     expect(html).toContain('Your Organization')
   })
 
+  it('hides the img tag when logo is empty', () => {
+    const html = renderHtml(sampleData, '')
+
+    expect(html).not.toContain('<img')
+    expect(html).toContain('Your Organization')
+  })
+
   it('renders org address in letterhead and footer when provided', () => {
     const dataWithAddress: LetterData = {
       ...sampleData,

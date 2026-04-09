@@ -317,7 +317,7 @@ export function renderHtml(data: LetterData, logoDataUri: string): string {
 <body>
 
 <div class="letterhead">
-  <img src="${logoDataUri}" alt="${orgName} Logo">
+  ${logoDataUri ? `<img src="${logoDataUri}" alt="${orgName} Logo">` : ''}
   <div class="org-name">${orgName}</div>
   ${orgAddress ? `<div class="org-address">${orgAddress}</div>` : ''}
 </div>
