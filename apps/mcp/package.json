@@ -1,0 +1,17 @@
+{
+  "name": "@donations-etl/mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/main.ts",
+  "dependencies": {
+    "@donations-etl/letter": "workspace:*",
+    "@donations-etl/bq": "workspace:*"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "google-auth-library": "^10.0.0",
+    "zod": "^4.0.0",
+    "neverthrow": "^8.0.0",
+    "pino": "^10.0.0"
+  }
+}

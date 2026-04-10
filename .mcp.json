@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "donations": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
