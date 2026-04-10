@@ -10,18 +10,17 @@ export const ConfigSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
+  // Public URL of this server (for OAuth metadata)
+  BASE_URL: z.string().url(),
+
   // GCP / BigQuery
   PROJECT_ID: z.string(),
   DATASET_CANON: z.string().default('donations'),
 
-  // Auth
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  MCP_ALLOWED_DOMAIN: z.string().optional(),
-  // Set to "true" to allow running without auth (local dev only — never set in deploy scripts)
-  MCP_ALLOW_ANONYMOUS: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
+  // Google OAuth
+  GOOGLE_CLIENT_ID: z.string(),
+  GOOGLE_CLIENT_SECRET: z.string(),
+  MCP_ALLOWED_DOMAIN: z.string(),
 
   // Organization identity (for letter templates)
   ORG_NAME: z.string().default('Your Organization'),

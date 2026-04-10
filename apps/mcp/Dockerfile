@@ -12,7 +12,10 @@ RUN bun install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/mcp/ apps/mcp/
 RUN bun build apps/mcp/src/main.ts --outdir dist --target bun \
-    --external playwright --external playwright-core
+    --external playwright --external playwright-core \
+    --external express --external @google-cloud/firestore \
+    --external @google-cloud/bigquery --external @google-cloud/storage \
+    --external @modelcontextprotocol/sdk
 
 FROM oven/bun:1
 RUN apt-get update && apt-get install -y \

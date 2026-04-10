@@ -59,6 +59,7 @@ RUNTIME_SA="${RUNTIME_SA:-donations-etl-sa}"
 RUNTIME_SA_EMAIL="${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID must be set}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET must be set}"
 MCP_ALLOWED_DOMAIN="${MCP_ALLOWED_DOMAIN:?MCP_ALLOWED_DOMAIN must be set}"
 
 SERVICE_NAME="mcp-server"
@@ -120,6 +121,7 @@ else
     log "  ${name} — set"
   }
 
+  ensure_secret "MCP_GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET}"
   ensure_secret "ORG_NAME" "${ORG_NAME:-}"
   ensure_secret "ORG_ADDRESS" "${ORG_ADDRESS:-}"
   ensure_secret "ORG_MISSION" "${ORG_MISSION:-}"
@@ -130,7 +132,7 @@ else
   # Grant SA access to secrets
   if [[ "$DRY_RUN" != "true" ]]; then
     log "Granting ${RUNTIME_SA} access to secrets..."
-    for SECRET_NAME in ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
+    for SECRET_NAME in MCP_GOOGLE_CLIENT_SECRET ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
       gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -170,6 +172,7 @@ log "Deploying Cloud Run Service..."
 if [[ "$DRY_RUN" == "true" ]]; then
   log "  Would deploy ${SERVICE_NAME} to Cloud Run"
 else
+  # First deploy to get the service URL
   gcloud run deploy "${SERVICE_NAME}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
@@ -179,8 +182,10 @@ else
 PROJECT_ID=${PROJECT_ID},\
 DATASET_CANON=${DATASET_CANON},\
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},\
-MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN}" \
+MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN},\
+BASE_URL=https://placeholder.example.com" \
     --set-secrets "\
+GOOGLE_CLIENT_SECRET=MCP_GOOGLE_CLIENT_SECRET:latest,\
 ORG_NAME=ORG_NAME:latest,\
 ORG_ADDRESS=ORG_ADDRESS:latest,\
 ORG_MISSION=ORG_MISSION:latest,\
@@ -196,6 +201,19 @@ DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
     --allow-unauthenticated \
     --quiet
 
+  # Get the actual service URL and update BASE_URL
+  SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}" \
+    --format='value(status.url)')
+
+  log "Updating BASE_URL to ${SERVICE_URL}..."
+  gcloud run services update "${SERVICE_NAME}" \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}" \
+    --update-env-vars "BASE_URL=${SERVICE_URL}" \
+    --quiet
+
   log "Deploy complete."
 fi
 
@@ -204,11 +222,6 @@ echo ""
 # ── Summary ───────────────────────────────────────────────────────
 
 if [[ "$DRY_RUN" == "false" ]]; then
-  SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
-    --region "${REGION}" \
-    --project "${PROJECT_ID}" \
-    --format='value(status.url)')
-
   echo ""
   log "Done!"
   echo ""
@@ -216,11 +229,14 @@ if [[ "$DRY_RUN" == "false" ]]; then
   info "MCP endpoint: ${SERVICE_URL}/mcp"
   info "Health check: curl ${SERVICE_URL}/health"
   echo ""
-  info "Claude Code config (add to ~/.claude/settings.json):"
+  info "Google OAuth redirect URI (add to GCP Console):"
+  info "  ${SERVICE_URL}/oauth/google/callback"
+  echo ""
+  info "Add to .mcp.json:"
   echo ""
   echo "  \"mcpServers\": {"
   echo "    \"donations\": {"
-  echo "      \"type\": \"url\","
+  echo "      \"type\": \"http\","
   echo "      \"url\": \"${SERVICE_URL}/mcp\""
   echo "    }"
   echo "  }"
