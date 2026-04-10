@@ -120,7 +120,6 @@ else
     log "  ${name} — set"
   }
 
-  ensure_secret "GOOGLE_GENERATIVE_AI_API_KEY" "${GOOGLE_GENERATIVE_AI_API_KEY:-placeholder}"
   ensure_secret "ORG_NAME" "${ORG_NAME:-}"
   ensure_secret "ORG_ADDRESS" "${ORG_ADDRESS:-}"
   ensure_secret "ORG_MISSION" "${ORG_MISSION:-}"
@@ -131,7 +130,7 @@ else
   # Grant SA access to secrets
   if [[ "$DRY_RUN" != "true" ]]; then
     log "Granting ${RUNTIME_SA} access to secrets..."
-    for SECRET_NAME in GOOGLE_GENERATIVE_AI_API_KEY ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
+    for SECRET_NAME in ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
       gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -182,7 +181,6 @@ DATASET_CANON=${DATASET_CANON},\
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},\
 MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN}" \
     --set-secrets "\
-GOOGLE_GENERATIVE_AI_API_KEY=GOOGLE_GENERATIVE_AI_API_KEY:latest,\
 ORG_NAME=ORG_NAME:latest,\
 ORG_ADDRESS=ORG_ADDRESS:latest,\
 ORG_MISSION=ORG_MISSION:latest,\

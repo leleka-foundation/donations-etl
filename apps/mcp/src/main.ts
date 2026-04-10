@@ -12,8 +12,9 @@ import { z } from 'zod'
 import { createAuthVerifier } from './auth'
 import { loadConfig } from './config'
 import { createLogger } from './logger'
+import { buildDonationsPrompt } from './tools/donations-prompt'
 import { handleGenerateLetter } from './tools/generate-letter'
-import { handleQueryDonations } from './tools/query-donations'
+import { handleQueryBigQuery } from './tools/query-bigquery'
 
 async function main(): Promise<void> {
   let config: ReturnType<typeof loadConfig>
@@ -53,27 +54,44 @@ async function main(): Promise<void> {
     const mcp = new McpServer(
       { name: 'donations-etl', version: '1.0.0' },
       {
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, prompts: {} },
       },
     )
 
-    mcp.registerTool(
-      'query-donations',
+    // Prompt: schema and SQL rules for the host LLM
+    mcp.registerPrompt(
+      'donations-schema',
       {
-        title: 'Query Donations',
+        title: 'Donations Schema',
         description:
-          'Answer natural language questions about donations. Translates the question to BigQuery SQL, executes it, and returns a formatted answer.',
+          'BigQuery table schema and SQL rules for querying donation data. Use this context when writing SQL for the query-bigquery tool.',
+      },
+      () => ({
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: buildDonationsPrompt(config),
+            },
+          },
+        ],
+      }),
+    )
+
+    // Tool: execute read-only SQL against BigQuery
+    mcp.registerTool(
+      'query-bigquery',
+      {
+        title: 'Query BigQuery',
+        description:
+          'Execute a read-only BigQuery SQL query against the donations table. Write SQL using the schema from the donations-schema prompt. Returns result rows or an error.',
         inputSchema: {
-          question: z
-            .string()
-            .describe('Natural language question about donations'),
+          sql: z.string().describe('BigQuery SQL SELECT query to execute'),
         },
       },
-      async ({ question }) => {
-        const result = await handleQueryDonations(
-          { question },
-          { config, logger },
-        )
+      async ({ sql }) => {
+        const result = await handleQueryBigQuery({ sql }, { config, logger })
 
         if (result.isErr()) {
           return {
@@ -82,11 +100,13 @@ async function main(): Promise<void> {
           }
         }
 
-        const parts = [result.value.text]
-        if (result.value.sql) {
-          parts.push(`\n\nSQL used:\n\`\`\`sql\n${result.value.sql}\n\`\`\``)
-        }
-        return { content: [{ type: 'text', text: parts.join('') }] }
+        const { rows, totalRows } = result.value
+        const text =
+          rows.length === 0
+            ? 'Query returned no results.'
+            : `${totalRows} row(s) returned${totalRows > 50 ? ' (showing first 50)' : ''}:\n\n${JSON.stringify(rows, null, 2)}`
+
+        return { content: [{ type: 'text', text }] }
       },
     )
 

@@ -75,13 +75,6 @@ describe('ConfigSchema', () => {
     expect(config.DEFAULT_SIGNER_TITLE).toBe('President')
   })
 
-  it('treats AI fields as optional', () => {
-    const config = ConfigSchema.parse(validEnv)
-
-    expect(config.GOOGLE_GENERATIVE_AI_API_KEY).toBeUndefined()
-    expect(config.AGENT_MODEL).toBeUndefined()
-  })
-
   it('rejects missing PROJECT_ID', () => {
     expect(() =>
       ConfigSchema.parse({ ...validEnv, PROJECT_ID: undefined }),

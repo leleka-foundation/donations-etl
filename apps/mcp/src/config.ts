@@ -18,10 +18,6 @@ export const ConfigSchema = z.object({
   GOOGLE_CLIENT_ID: z.string(),
   MCP_ALLOWED_DOMAIN: z.string(),
 
-  // AI (for donation agent)
-  GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
-  AGENT_MODEL: z.string().optional(),
-
   // Organization identity (for letter templates)
   ORG_NAME: z.string().default('Your Organization'),
   ORG_ADDRESS: z.string().default(''),
