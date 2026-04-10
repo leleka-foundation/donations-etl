@@ -38,6 +38,7 @@
     "@dotenvx/dotenvx": "^1.52.0",
     "@google-cloud/bigquery": "^8.1.1",
     "@google-cloud/storage": "^7.19.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@octokit/rest": "^22.0.1",
     "@openai/codex-sdk": "^0.101.0",
     "@playwright/test": "^1.58.2",
