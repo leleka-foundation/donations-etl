@@ -32,6 +32,7 @@ const testConfig = {
   DATASET_CANON: 'donations',
   GOOGLE_CLIENT_ID: 'test-client-id',
   MCP_ALLOWED_DOMAIN: 'example.com',
+  MCP_ALLOW_ANONYMOUS: false,
   ORG_NAME: 'Test Org',
   ORG_ADDRESS: '123 Main St',
   ORG_MISSION: 'Test mission',

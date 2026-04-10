@@ -15,8 +15,13 @@ export const ConfigSchema = z.object({
   DATASET_CANON: z.string().default('donations'),
 
   // Auth
-  GOOGLE_CLIENT_ID: z.string(),
-  MCP_ALLOWED_DOMAIN: z.string(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  MCP_ALLOWED_DOMAIN: z.string().optional(),
+  // Set to "true" to allow running without auth (local dev only — never set in deploy scripts)
+  MCP_ALLOW_ANONYMOUS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 
   // Organization identity (for letter templates)
   ORG_NAME: z.string().default('Your Organization'),

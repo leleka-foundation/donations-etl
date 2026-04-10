@@ -6,6 +6,7 @@
  * over Streamable HTTP transport, authenticated via Google OIDC.
  */
 import { closeBrowser, launchBrowser } from '@donations-etl/letter'
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
@@ -30,19 +31,38 @@ async function main(): Promise<void> {
 
   const logger = createLogger(config)
 
-  // Launch browser for PDF generation
+  // Launch browser for PDF generation (non-fatal — server works without it,
+  // but generate-letter with format=pdf will fail)
   const browserResult = await launchBrowser()
   if (browserResult.isErr()) {
-    logger.error({ error: browserResult.error }, 'Failed to launch browser')
-    process.exit(1)
+    logger.warn(
+      { error: browserResult.error },
+      'Browser not available — PDF letter generation will be disabled',
+    )
+  } else {
+    logger.info('Browser launched for PDF generation')
   }
-  logger.info('Browser launched for PDF generation')
 
-  const verifyAuth = createAuthVerifier(
-    config.GOOGLE_CLIENT_ID,
-    config.MCP_ALLOWED_DOMAIN,
-    logger,
-  )
+  // Auth is required unless MCP_ALLOW_ANONYMOUS=true
+  if (!config.GOOGLE_CLIENT_ID || !config.MCP_ALLOWED_DOMAIN) {
+    if (!config.MCP_ALLOW_ANONYMOUS) {
+      logger.error(
+        'GOOGLE_CLIENT_ID and MCP_ALLOWED_DOMAIN are required. ' +
+          'Set MCP_ALLOW_ANONYMOUS=true for local dev without auth.',
+      )
+      process.exit(1)
+    }
+    logger.warn('Auth disabled — MCP_ALLOW_ANONYMOUS is set')
+  }
+
+  const verifyAuth =
+    config.GOOGLE_CLIENT_ID && config.MCP_ALLOWED_DOMAIN
+      ? createAuthVerifier(
+          config.GOOGLE_CLIENT_ID,
+          config.MCP_ALLOWED_DOMAIN,
+          logger,
+        )
+      : null
 
   // Track transports per session for stateful connections
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>()
@@ -221,22 +241,26 @@ async function main(): Promise<void> {
 
       // MCP endpoint
       if (url.pathname === '/mcp') {
-        // Authenticate
-        const authResult = await verifyAuth(request)
-        if (!authResult.ok) {
-          return new Response(
-            JSON.stringify({ error: authResult.error.message }),
-            {
-              status: authResult.error.status,
-              headers: { 'Content-Type': 'application/json' },
-            },
-          )
-        }
+        // Authenticate (if enabled)
+        let authInfo: AuthInfo | undefined
 
-        logger.debug(
-          { email: authResult.user.email },
-          'Authenticated MCP request',
-        )
+        if (verifyAuth) {
+          const authResult = await verifyAuth(request)
+          if (!authResult.ok) {
+            return new Response(
+              JSON.stringify({ error: authResult.error.message }),
+              {
+                status: authResult.error.status,
+                headers: { 'Content-Type': 'application/json' },
+              },
+            )
+          }
+          logger.debug(
+            { email: authResult.user.email },
+            'Authenticated MCP request',
+          )
+          authInfo = authResult.authInfo
+        }
 
         const sessionId = request.headers.get('mcp-session-id')
 
@@ -247,7 +271,7 @@ async function main(): Promise<void> {
           // Existing session — reuse transport
           const transport = existingTransport
           const response = await transport.handleRequest(request, {
-            authInfo: authResult.authInfo,
+            authInfo,
           })
           return addCorsHeaders(response)
         }
@@ -257,10 +281,7 @@ async function main(): Promise<void> {
           sessionIdGenerator: () => crypto.randomUUID(),
           onsessioninitialized: (id) => {
             transports.set(id, transport)
-            logger.info(
-              { sessionId: id, email: authResult.user.email },
-              'MCP session started',
-            )
+            logger.info({ sessionId: id }, 'MCP session started')
           },
           onsessionclosed: (id) => {
             transports.delete(id)
@@ -272,7 +293,7 @@ async function main(): Promise<void> {
         await mcp.connect(transport)
 
         const response = await transport.handleRequest(request, {
-          authInfo: authResult.authInfo,
+          authInfo,
         })
         return addCorsHeaders(response)
       }

@@ -81,15 +81,46 @@ describe('ConfigSchema', () => {
     ).toThrow()
   })
 
-  it('rejects missing GOOGLE_CLIENT_ID', () => {
-    expect(() =>
-      ConfigSchema.parse({ ...validEnv, GOOGLE_CLIENT_ID: undefined }),
-    ).toThrow()
+  it('allows omitting GOOGLE_CLIENT_ID', () => {
+    const config = ConfigSchema.parse({
+      ...validEnv,
+      GOOGLE_CLIENT_ID: undefined,
+    })
+    expect(config.GOOGLE_CLIENT_ID).toBeUndefined()
   })
 
-  it('rejects missing MCP_ALLOWED_DOMAIN', () => {
+  it('allows omitting MCP_ALLOWED_DOMAIN', () => {
+    const config = ConfigSchema.parse({
+      ...validEnv,
+      MCP_ALLOWED_DOMAIN: undefined,
+    })
+    expect(config.MCP_ALLOWED_DOMAIN).toBeUndefined()
+  })
+
+  it('defaults MCP_ALLOW_ANONYMOUS to false', () => {
+    const config = ConfigSchema.parse(validEnv)
+    expect(config.MCP_ALLOW_ANONYMOUS).toBe(false)
+  })
+
+  it('parses MCP_ALLOW_ANONYMOUS=true', () => {
+    const config = ConfigSchema.parse({
+      ...validEnv,
+      MCP_ALLOW_ANONYMOUS: 'true',
+    })
+    expect(config.MCP_ALLOW_ANONYMOUS).toBe(true)
+  })
+
+  it('parses MCP_ALLOW_ANONYMOUS=false', () => {
+    const config = ConfigSchema.parse({
+      ...validEnv,
+      MCP_ALLOW_ANONYMOUS: 'false',
+    })
+    expect(config.MCP_ALLOW_ANONYMOUS).toBe(false)
+  })
+
+  it('rejects invalid MCP_ALLOW_ANONYMOUS', () => {
     expect(() =>
-      ConfigSchema.parse({ ...validEnv, MCP_ALLOWED_DOMAIN: undefined }),
+      ConfigSchema.parse({ ...validEnv, MCP_ALLOW_ANONYMOUS: 'yes' }),
     ).toThrow()
   })
 
