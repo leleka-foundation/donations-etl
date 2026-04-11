@@ -2,9 +2,12 @@
  * Tests for the Google OAuth proxy provider.
  */
 import type { Response as ExpressResponse } from 'express'
+import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleOAuthProvider } from '../src/auth/provider'
 import type { OAuthStorage } from '../src/auth/storage'
+
+const mockLogger = pino({ level: 'silent' })
 
 function createMockStorage(): OAuthStorage {
   return {
@@ -39,7 +42,11 @@ describe('GoogleOAuthProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     storage = createMockStorage()
-    provider = new GoogleOAuthProvider({ ...providerConfig, storage })
+    provider = new GoogleOAuthProvider({
+      ...providerConfig,
+      storage,
+      logger: mockLogger,
+    })
   })
 
   describe('clientsStore', () => {
@@ -54,6 +61,32 @@ describe('GoogleOAuthProvider', () => {
       const result = await provider.clientsStore.getClient('test')
       expect(result).toEqual(clientData)
       expect(storage.getClient).toHaveBeenCalledWith('test')
+    })
+
+    it('rethrows errors from storage.getClient', async () => {
+      vi.mocked(storage.getClient).mockRejectedValue(
+        new Error('Firestore unavailable'),
+      )
+
+      await expect(provider.clientsStore.getClient('test')).rejects.toThrow(
+        'Firestore unavailable',
+      )
+    })
+
+    it('rethrows errors from storage.saveClient', async () => {
+      vi.mocked(storage.saveClient).mockRejectedValue(
+        new Error('Permission denied'),
+      )
+
+      const store = provider.clientsStore
+      if (!store.registerClient)
+        throw new Error('registerClient not implemented')
+
+      await expect(
+        store.registerClient({
+          redirect_uris: ['https://example.com/callback'],
+        }),
+      ).rejects.toThrow('Permission denied')
     })
 
     it('registers client with generated ID', async () => {

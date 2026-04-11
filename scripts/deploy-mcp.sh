@@ -94,6 +94,20 @@ fi
 
 echo ""
 
+# ── Firestore IAM ─────────────────────────────────────────────────
+
+log "Granting Firestore access to ${RUNTIME_SA}..."
+if [[ "$DRY_RUN" != "true" ]]; then
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+    --role="roles/datastore.user" \
+    --condition=None \
+    --quiet >/dev/null 2>&1
+  log "  Firestore access granted"
+fi
+
+echo ""
+
 # ── GCP Secrets ───────────────────────────────────────────────────
 
 if [[ "$SKIP_SECRETS" == "true" ]]; then

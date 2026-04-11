@@ -17,6 +17,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 import type { Response } from 'express'
+import type { Logger } from 'pino'
 import { z } from 'zod'
 import type { OAuthStorage } from './storage'
 import { generateToken } from './storage'
@@ -55,18 +56,27 @@ export interface GoogleOAuthProviderConfig {
   allowedDomain: string
   baseUrl: string
   storage: OAuthStorage
+  logger: Logger
 }
 
 /**
  * Clients store backed by the shared OAuthStorage.
  */
 class FirestoreClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private storage: OAuthStorage) {}
+  constructor(
+    private storage: OAuthStorage,
+    private logger: Logger,
+  ) {}
 
   async getClient(
     clientId: string,
   ): Promise<OAuthClientInformationFull | undefined> {
-    return this.storage.getClient(clientId)
+    try {
+      return await this.storage.getClient(clientId)
+    } catch (err) {
+      this.logger.error({ err }, 'getClient failed')
+      throw err
+    }
   }
 
   async registerClient(
@@ -75,13 +85,18 @@ class FirestoreClientsStore implements OAuthRegisteredClientsStore {
       'client_id' | 'client_id_issued_at'
     >,
   ): Promise<OAuthClientInformationFull> {
-    const fullClient: OAuthClientInformationFull = {
-      ...client,
-      client_id: generateToken(),
-      client_id_issued_at: Math.floor(Date.now() / 1000),
+    try {
+      const fullClient: OAuthClientInformationFull = {
+        ...client,
+        client_id: generateToken(),
+        client_id_issued_at: Math.floor(Date.now() / 1000),
+      }
+      await this.storage.saveClient(fullClient)
+      return fullClient
+    } catch (err) {
+      this.logger.error({ err, client }, 'registerClient failed')
+      throw err
     }
-    await this.storage.saveClient(fullClient)
-    return fullClient
   }
 }
 
@@ -94,7 +109,10 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
 
   constructor(config: GoogleOAuthProviderConfig) {
     this.config = config
-    this._clientsStore = new FirestoreClientsStore(config.storage)
+    this._clientsStore = new FirestoreClientsStore(
+      config.storage,
+      config.logger,
+    )
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {

@@ -59,6 +59,7 @@ async function main(): Promise<void> {
     allowedDomain: config.MCP_ALLOWED_DOMAIN,
     baseUrl: config.BASE_URL,
     storage,
+    logger,
   })
 
   const baseUrl = new URL(config.BASE_URL)
@@ -217,6 +218,10 @@ async function main(): Promise<void> {
 
   const app = express()
 
+  // Cloud Run terminates TLS and forwards via a proxy; trust one hop
+  // so express-rate-limit and req.ip work correctly
+  app.set('trust proxy', 1)
+
   // Health check (no auth)
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' })
@@ -297,6 +302,27 @@ async function main(): Promise<void> {
       authInfo: req.auth,
     })
   })
+
+  // Error handler — log unhandled errors with full stack
+  app.use(
+    (
+      err: Error,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      logger.error(
+        { err: { message: err.message, stack: err.stack } },
+        'Unhandled error',
+      )
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'server_error',
+          error_description: err.message,
+        })
+      }
+    },
+  )
 
   // Start server
   const server = app.listen(config.PORT, () => {
