@@ -94,16 +94,32 @@ fi
 
 echo ""
 
-# ── Firestore IAM ─────────────────────────────────────────────────
+# ── Firestore ────────────────────────────────────────────────────
 
-log "Granting Firestore access to ${RUNTIME_SA}..."
+log "Ensuring Firestore is provisioned..."
 if [[ "$DRY_RUN" != "true" ]]; then
+  # Enable the API (idempotent)
+  gcloud services enable firestore.googleapis.com \
+    --project="${PROJECT_ID}" --quiet >/dev/null 2>&1
+
+  # Create the default database if it doesn't exist
+  if ! gcloud firestore databases describe \
+      --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    log "  Creating Firestore database in ${REGION}..."
+    gcloud firestore databases create \
+      --project="${PROJECT_ID}" \
+      --location="${REGION}" \
+      --type=firestore-native \
+      --quiet >/dev/null 2>&1
+  fi
+
+  # Grant the runtime SA access
   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
     --role="roles/datastore.user" \
     --condition=None \
     --quiet >/dev/null 2>&1
-  log "  Firestore access granted"
+  log "  Firestore ready"
 fi
 
 echo ""

@@ -24,7 +24,8 @@ Tell the user:
 > 2. GCP project and infrastructure
 > 3. Data source credentials (only the ones you use)
 > 4. Slack integration (optional)
-> 5. Letter template settings
+> 5. MCP server — tools in your LLM UI, e.g. Claude.ai or ChatGPT (optional)
+> 6. Letter template settings
 >
 > You can skip any section that does not apply to your organization.
 
@@ -286,7 +287,165 @@ If no:
 - Tell the user: "Query bot skipped. The `app_mention` handler is always registered in the
   service. To enable it, configure Event Subscriptions in the Slack app settings."
 
-## Step 9: Install Dependencies (if not already done)
+## Step 9: MCP Server (Optional)
+
+Ask: "Do you want to deploy the MCP server? This exposes donation queries and letter
+generation as tools that can be used directly from Claude.ai, Claude Code, ChatGPT,
+and any other MCP-capable LLM client, with Google Workspace authentication."
+
+Explain what's different from the Slack bot (Steps 6-8):
+
+- Slack bot = users interact from Slack
+- MCP server = users interact from their LLM UI (Claude.ai web, Claude Code terminal,
+  ChatGPT, etc.) and can use the tools mid-conversation alongside other tools
+
+If no: Skip. Tell the user they can enable it later by re-running `/setup` or by following
+the `mcp-server` skill directly.
+
+If yes, walk through the following.
+
+### 9a: Create a Google OAuth Client ID
+
+Tell the user this step is manual because Google has no API for creating standard OAuth
+clients. It's a one-time setup.
+
+1. Open the credentials page in the GCP console:
+   ```
+   https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}
+   ```
+2. Click **Create Credentials** → **OAuth client ID**
+3. If prompted, configure the OAuth consent screen first:
+   - User type: **Internal** (if the organization uses Google Workspace) or **External**
+   - App name: the organization's name
+   - User support email: the admin's email
+   - Publish the app (or leave in testing if external)
+4. Back on Credentials → **Create Credentials** → **OAuth client ID**
+   - Application type: **Web application**
+   - Name: "MCP Server" (or similar)
+   - Authorized redirect URIs: leave empty for now — we'll add the real one after deploy
+5. Click **Create**. Copy the **Client ID** and **Client Secret**.
+
+Ask the user for:
+
+- `GOOGLE_CLIENT_ID` (ends in `.apps.googleusercontent.com`)
+- `GOOGLE_CLIENT_SECRET` (starts with `GOCSPX-`)
+
+### 9b: Set the allowed domain
+
+Ask: "Which Google Workspace domain should be allowed to access the MCP server?"
+
+This is the domain part of the email addresses (e.g., `leleka.care`, `example.org`).
+Users signing in with emails outside this domain will be rejected.
+
+Set `MCP_ALLOWED_DOMAIN` in `.env`.
+
+Explain that this restriction is enforced server-side from the `hd` claim in Google's
+ID token — it's not a UI hint. Users can only authenticate with a Workspace account in
+this domain.
+
+### 9c: Deploy the MCP server
+
+Run the deploy script. It enables the Firestore API, creates the database, grants IAM,
+pushes secrets, builds the container, and deploys to Cloud Run — all idempotently.
+
+```bash
+./scripts/deploy-mcp.sh
+```
+
+This takes 3-5 minutes. When it finishes, the script prints the service URL, e.g.:
+
+```
+https://mcp-server-XXXXXXXXXX-uc.a.run.app
+```
+
+Save this URL — we'll need it in the next two sub-steps.
+
+### 9d: Add the redirect URI to Google OAuth
+
+The deploy gave us the real service URL. Now add the callback URL to the Google OAuth
+client that was created in 9a. This is also a one-time manual step.
+
+1. Open the credentials page again:
+   ```
+   https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}
+   ```
+2. Click the OAuth client ID created in 9a
+3. Under **Authorized redirect URIs** → **Add URI**, paste:
+   ```
+   <SERVICE_URL>/oauth/google/callback
+   ```
+   (e.g., `https://mcp-server-XXXXXXXXXX-uc.a.run.app/oauth/google/callback`)
+4. Click **Save**
+
+Changes propagate within a minute or two.
+
+### 9e: Verify the server
+
+Confirm the server is up and enforcing auth:
+
+```bash
+curl -s <SERVICE_URL>/health
+# {"status":"ok"}
+
+curl -si -X POST <SERVICE_URL>/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}' \
+  | grep -i 'www-authenticate'
+# www-authenticate: Bearer error="invalid_token", ...
+```
+
+If the health check returns ok and the unauthenticated `/mcp` returns a 401 with a
+`WWW-Authenticate` header, the server is ready.
+
+### 9f: Connect your LLM client
+
+The MCP server is discovered via OAuth metadata — any MCP-capable client will walk the
+user through the login flow after you point it at the `/mcp` endpoint. The exact config
+format varies by client.
+
+**Claude Code (project-level)** — create `.mcp.json` at the project root:
+
+```json
+{
+  "mcpServers": {
+    "donations": {
+      "type": "http",
+      "url": "<SERVICE_URL>/mcp"
+    }
+  }
+}
+```
+
+Restart Claude Code. It will open a browser for Google login on first connect.
+
+**Claude Code (global)** — same structure, but in `~/.claude.json` under the `mcpServers`
+key. Use this to make the server available in every project.
+
+**Claude.ai (web)**
+
+1. Open claude.ai → Settings → **Connectors** (or "Custom connectors")
+2. Click **Add custom connector**
+3. Paste the MCP URL: `<SERVICE_URL>/mcp`
+4. Claude.ai walks through Google login and enables the connector
+
+**ChatGPT (web)** — currently in beta; the path is Settings → **Connectors**. Paste the
+same URL. ChatGPT supports the same MCP OAuth discovery flow.
+
+**Other MCP-capable clients** — any client that implements the MCP streamable HTTP
+transport with OAuth discovery can connect. Point it at `<SERVICE_URL>/mcp` and it will
+discover the auth endpoints via `/.well-known/oauth-authorization-server`.
+
+Tell the user to try a prompt like "show me the 5 most recent donations" to verify the
+tools work end-to-end. On first use the client prompts for Google login, after which
+the tool call returns real results.
+
+### Note on cost
+
+The MCP server runs on Cloud Run with `min-instances=0` — it scales to zero when idle
+and wakes up on request (cold start ~1-2s). Firestore OAuth state fits comfortably in
+the free tier. Expected monthly cost for a small team: under $1.
+
+## Step 10: Install Dependencies (if not already done)
 
 If dependencies haven't been installed yet (e.g., running `/setup` standalone without
 `/bootstrap`):
@@ -295,7 +454,7 @@ If dependencies haven't been installed yet (e.g., running `/setup` standalone wi
 bun install
 ```
 
-## Step 10: Verify Configuration
+## Step 11: Verify Configuration
 
 Run a quick check:
 
@@ -307,7 +466,7 @@ bun test:run
 
 Report results to the user. If tests fail, help debug.
 
-## Step 11: Provision GCP Infrastructure (Optional)
+## Step 12: Provision GCP Infrastructure (Optional)
 
 Ask: "Would you like to provision GCP infrastructure now?"
 
@@ -326,7 +485,7 @@ If no:
 - Tell the user they can run `dotenvx run -- ./infra/provision.sh` later
 - Or use the `/provision` skill
 
-## Step 12: Summary
+## Step 13: Summary
 
 Print a summary of what was configured:
 
@@ -337,6 +496,7 @@ Print a summary of what was configured:
 - Letter service: configured/not configured
 - Reports: enabled/disabled (if enabled, show channel and schedules)
 - Query bot: enabled/disabled
+- MCP server: enabled/disabled (if enabled, show the service URL)
 
 Suggest next steps:
 
@@ -344,6 +504,7 @@ Suggest next steps:
 - Deploy to GCP: use the `/deploying-etl` skill
 - Generate a donor letter: use the `/donor-letter` skill
 - Query donation data: use the `/donations-query` skill
+- Connect another LLM client to the MCP server: point it at `<SERVICE_URL>/mcp`
 
 ## Important Notes
 
