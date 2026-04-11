@@ -158,24 +158,25 @@ describe('FirestoreOAuthStorage', () => {
       expect(inst).toBeUndefined()
     })
 
-    it('returns undefined for expired installation', async () => {
+    it('returns expired installations (expiry is checked by the provider, not storage)', async () => {
+      const expired = {
+        accessToken: 'token',
+        refreshToken: 'refresh',
+        clientId: 'client',
+        userId: 'user',
+        userEmail: 'user@example.com',
+        userDomain: 'example.com',
+        issuedAt: Math.floor(Date.now() / 1000) - 7200,
+        expiresAt: Math.floor(Date.now() / 1000) - 100,
+      }
       mockGet.mockResolvedValue({
         exists: true,
-        data: () => ({
-          installation: {
-            accessToken: 'token',
-            refreshToken: 'refresh',
-            clientId: 'client',
-            userId: 'user',
-            userEmail: 'user@example.com',
-            userDomain: 'example.com',
-            issuedAt: Math.floor(Date.now() / 1000) - 7200,
-            expiresAt: Math.floor(Date.now() / 1000) - 100,
-          },
-        }),
+        data: () => ({ installation: expired }),
       })
       const inst = await storage.getInstallation('token')
-      expect(inst).toBeUndefined()
+      // Storage returns the installation even if expired — refresh flow needs
+      // access to expired installations to rotate tokens.
+      expect(inst).toEqual(expired)
     })
 
     it('returns valid installation', async () => {

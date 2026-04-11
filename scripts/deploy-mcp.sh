@@ -202,7 +202,22 @@ log "Deploying Cloud Run Service..."
 if [[ "$DRY_RUN" == "true" ]]; then
   log "  Would deploy ${SERVICE_NAME} to Cloud Run"
 else
-  # First deploy to get the service URL
+  # If the service already exists, read its URL so we can deploy with
+  # the correct BASE_URL in a single step. Otherwise, use a placeholder
+  # and patch it after the first deploy creates the service.
+  EXISTING_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}" \
+    --format='value(status.url)' 2>/dev/null || echo '')
+
+  if [[ -n "${EXISTING_URL}" ]]; then
+    BASE_URL_VALUE="${EXISTING_URL}"
+    log "  Reusing existing service URL: ${BASE_URL_VALUE}"
+  else
+    BASE_URL_VALUE="https://placeholder.example.com"
+    log "  First deploy — BASE_URL will be patched after the service is created"
+  fi
+
   gcloud run deploy "${SERVICE_NAME}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
@@ -213,7 +228,7 @@ PROJECT_ID=${PROJECT_ID},\
 DATASET_CANON=${DATASET_CANON},\
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},\
 MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN},\
-BASE_URL=https://placeholder.example.com" \
+BASE_URL=${BASE_URL_VALUE}" \
     --set-secrets "\
 GOOGLE_CLIENT_SECRET=MCP_GOOGLE_CLIENT_SECRET:latest,\
 ORG_NAME=ORG_NAME:latest,\
@@ -231,18 +246,22 @@ DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
     --allow-unauthenticated \
     --quiet
 
-  # Get the actual service URL and update BASE_URL
+  # Read the actual service URL (it's stable across deploys, so for
+  # redeploys this matches what we already passed in)
   SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
     --format='value(status.url)')
 
-  log "Updating BASE_URL to ${SERVICE_URL}..."
-  gcloud run services update "${SERVICE_NAME}" \
-    --region "${REGION}" \
-    --project "${PROJECT_ID}" \
-    --update-env-vars "BASE_URL=${SERVICE_URL}" \
-    --quiet
+  # Only patch BASE_URL on the first deploy (when we used the placeholder)
+  if [[ "${BASE_URL_VALUE}" != "${SERVICE_URL}" ]]; then
+    log "Patching BASE_URL to ${SERVICE_URL}..."
+    gcloud run services update "${SERVICE_NAME}" \
+      --region "${REGION}" \
+      --project "${PROJECT_ID}" \
+      --update-env-vars "BASE_URL=${SERVICE_URL}" \
+      --quiet
+  fi
 
   log "Deploy complete."
 fi

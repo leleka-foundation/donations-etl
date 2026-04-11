@@ -285,6 +285,11 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
     if (!installation) {
       throw new InvalidTokenError('Invalid or expired access token')
     }
+    // Storage no longer enforces expiry (so refresh can read old installations).
+    // Enforce it here at the auth check.
+    if (installation.expiresAt < Math.floor(Date.now() / 1000)) {
+      throw new InvalidTokenError('Invalid or expired access token')
+    }
 
     return {
       token,

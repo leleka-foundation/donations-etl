@@ -180,9 +180,12 @@ export class FirestoreOAuthStorage implements OAuthStorage {
     if (!doc.exists) return undefined
     const data = doc.data()
     if (!data) return undefined
-    const installation = McpInstallationSchema.parse(data.installation)
-    if (installation.expiresAt < Date.now() / 1000) return undefined
-    return installation
+    // Note: we do NOT reject expired installations here. The access token
+    // expiry is enforced by the provider's verifyAccessToken. The refresh
+    // flow legitimately needs to read installations whose access token has
+    // expired — that's the whole point of refresh tokens. The Firestore
+    // document-level TTL (7 days) handles cleanup of truly old records.
+    return McpInstallationSchema.parse(data.installation)
   }
 
   async saveInstallation(installation: McpInstallation): Promise<void> {

@@ -263,6 +263,24 @@ describe('GoogleOAuthProvider', () => {
         'Invalid or expired',
       )
     })
+
+    it('throws for expired token', async () => {
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'expired-token',
+        refreshToken: 'refresh',
+        clientId: 'client1',
+        userId: 'user1',
+        userEmail: 'user@example.com',
+        userDomain: 'example.com',
+        issuedAt: now - 7200,
+        expiresAt: now - 100,
+      })
+
+      await expect(provider.verifyAccessToken('expired-token')).rejects.toThrow(
+        'Invalid or expired',
+      )
+    })
   })
 
   describe('exchangeRefreshToken', () => {
@@ -271,6 +289,8 @@ describe('GoogleOAuthProvider', () => {
       vi.mocked(storage.getAccessTokenForRefresh).mockResolvedValue(
         'old-access',
       )
+      // Old installation is already expired — refresh should still work.
+      // This is the whole point of refresh tokens.
       vi.mocked(storage.getInstallation).mockResolvedValue({
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
@@ -278,8 +298,8 @@ describe('GoogleOAuthProvider', () => {
         userId: 'user1',
         userEmail: 'user@example.com',
         userDomain: 'example.com',
-        issuedAt: now - 3600,
-        expiresAt: now,
+        issuedAt: now - 7200,
+        expiresAt: now - 100,
       })
       vi.mocked(storage.saveInstallation).mockResolvedValue(undefined)
       vi.mocked(storage.saveRefreshMapping).mockResolvedValue(undefined)
