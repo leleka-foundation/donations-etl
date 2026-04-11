@@ -267,8 +267,9 @@ async function main(): Promise<void> {
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(baseUrl),
   })
 
-  // MCP Streamable HTTP endpoint
-  app.all('/mcp', bearerAuth, async (req, res) => {
+  // MCP Streamable HTTP endpoint — parse JSON body for POST requests
+  // so we can pass it as parsedBody to the transport
+  app.all('/mcp', bearerAuth, express.json(), async (req, res) => {
     const rawSessionId = req.headers['mcp-session-id']
     const sessionId =
       typeof rawSessionId === 'string' ? rawSessionId : undefined
@@ -276,9 +277,7 @@ async function main(): Promise<void> {
     const existingTransport = sessionId ? transports.get(sessionId) : undefined
 
     if (existingTransport) {
-      await existingTransport.handleRequest(req, res, {
-        authInfo: req.auth,
-      })
+      await existingTransport.handleRequest(req, res, req.body)
       return
     }
 
@@ -298,9 +297,7 @@ async function main(): Promise<void> {
     const mcp = createMcpServerInstance()
     await mcp.connect(transport)
 
-    await transport.handleRequest(req, res, {
-      authInfo: req.auth,
-    })
+    await transport.handleRequest(req, res, req.body)
   })
 
   // Error handler — log unhandled errors with full stack

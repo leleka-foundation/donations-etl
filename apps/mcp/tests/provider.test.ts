@@ -450,7 +450,9 @@ describe('GoogleOAuthProvider', () => {
       expect(storage.saveInstallation).toHaveBeenCalledOnce()
       expect(storage.saveRefreshMapping).toHaveBeenCalledOnce()
       expect(storage.saveTokenExchange).toHaveBeenCalledOnce()
-      expect(storage.deletePendingAuth).toHaveBeenCalledOnce()
+      // Pending auth is intentionally NOT deleted — SDK's /token handler
+      // calls challengeForAuthorizationCode after this, which needs it.
+      expect(storage.deletePendingAuth).not.toHaveBeenCalled()
 
       vi.unstubAllGlobals()
     })

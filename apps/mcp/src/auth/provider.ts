@@ -6,6 +6,10 @@
  * and issues MCP tokens after verifying the user's Google Workspace domain.
  */
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js'
+import {
+  InvalidGrantError,
+  InvalidTokenError,
+} from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import type {
   AuthorizationParams,
   OAuthServerProvider,
@@ -167,11 +171,17 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
     _client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
-    const pending = await this.config.storage.getPendingAuth(authorizationCode)
-    if (!pending) {
-      throw new Error('Unknown authorization code')
+    try {
+      const pending =
+        await this.config.storage.getPendingAuth(authorizationCode)
+      if (!pending) {
+        throw new InvalidGrantError('Unknown authorization code')
+      }
+      return pending.codeChallenge
+    } catch (err) {
+      this.config.logger.error({ err }, 'challengeForAuthorizationCode failed')
+      throw err
     }
-    return pending.codeChallenge
   }
 
   /**
@@ -181,31 +191,38 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
     _client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<OAuthTokens> {
-    // Mark the exchange as used (replay protection)
-    const wasUnused =
-      await this.config.storage.markTokenExchangeUsed(authorizationCode)
-    if (!wasUnused) {
-      throw new Error('Authorization code already used or invalid')
-    }
+    try {
+      // Mark the exchange as used (replay protection)
+      const wasUnused =
+        await this.config.storage.markTokenExchangeUsed(authorizationCode)
+      if (!wasUnused) {
+        throw new InvalidGrantError(
+          'Authorization code already used or invalid',
+        )
+      }
 
-    const exchange =
-      await this.config.storage.getTokenExchange(authorizationCode)
-    if (!exchange) {
-      throw new Error('Token exchange not found')
-    }
+      const exchange =
+        await this.config.storage.getTokenExchange(authorizationCode)
+      if (!exchange) {
+        throw new InvalidGrantError('Token exchange not found')
+      }
 
-    const installation = await this.config.storage.getInstallation(
-      exchange.accessToken,
-    )
-    if (!installation) {
-      throw new Error('Installation not found')
-    }
+      const installation = await this.config.storage.getInstallation(
+        exchange.accessToken,
+      )
+      if (!installation) {
+        throw new InvalidGrantError('Installation not found')
+      }
 
-    return {
-      access_token: installation.accessToken,
-      refresh_token: installation.refreshToken,
-      token_type: 'bearer',
-      expires_in: TOKEN_LIFETIME_S,
+      return {
+        access_token: installation.accessToken,
+        refresh_token: installation.refreshToken,
+        token_type: 'bearer',
+        expires_in: TOKEN_LIFETIME_S,
+      }
+    } catch (err) {
+      this.config.logger.error({ err }, 'exchangeAuthorizationCode failed')
+      throw err
     }
   }
 
@@ -219,13 +236,13 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
     const oldAccessToken =
       await this.config.storage.getAccessTokenForRefresh(refreshToken)
     if (!oldAccessToken) {
-      throw new Error('Invalid refresh token')
+      throw new InvalidGrantError('Invalid refresh token')
     }
 
     const oldInstallation =
       await this.config.storage.getInstallation(oldAccessToken)
     if (!oldInstallation) {
-      throw new Error('Installation not found')
+      throw new InvalidGrantError('Installation not found')
     }
 
     // Generate new tokens
@@ -266,7 +283,7 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const installation = await this.config.storage.getInstallation(token)
     if (!installation) {
-      throw new Error('Invalid or expired access token')
+      throw new InvalidTokenError('Invalid or expired access token')
     }
 
     return {
@@ -375,14 +392,17 @@ export class GoogleOAuthProvider implements OAuthServerProvider {
       expiresAt: now + TOKEN_LIFETIME_S,
     }
 
-    // Save everything
+    // Save everything. Note: we do NOT delete pending auth here — the
+    // SDK's /token handler calls challengeForAuthorizationCode() after
+    // this callback completes, which reads the code challenge from the
+    // pending auth record. Pending auth has a 10-minute TTL and will
+    // expire on its own.
     await this.config.storage.saveInstallation(installation)
     await this.config.storage.saveRefreshMapping(refreshToken, accessToken)
     await this.config.storage.saveTokenExchange(
       mcpAuthorizationCode,
       accessToken,
     )
-    await this.config.storage.deletePendingAuth(mcpAuthorizationCode)
 
     // Build redirect URL back to MCP client
     const redirectUrl = new URL(pending.redirectUri)

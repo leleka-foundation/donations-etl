@@ -119,7 +119,7 @@ export class FirestoreOAuthStorage implements OAuthStorage {
   private db: Firestore
 
   constructor(projectId: string) {
-    this.db = new Firestore({ projectId })
+    this.db = new Firestore({ projectId, ignoreUndefinedProperties: true })
   }
 
   // ── Clients ──────────────────────────────────────────────────────
