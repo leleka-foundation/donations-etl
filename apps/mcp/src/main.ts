@@ -3,14 +3,23 @@
  * MCP server for donations ETL.
  *
  * Exposes donation querying and letter generation as MCP tools
- * over Streamable HTTP transport, authenticated via Google OIDC.
+ * over Streamable HTTP transport, authenticated via Google OAuth
+ * with Workspace domain restriction.
+ *
+ * Uses Express for compatibility with the MCP SDK's auth router.
  */
 import { closeBrowser, launchBrowser } from '@donations-etl/letter'
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js'
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'
+import {
+  getOAuthProtectedResourceMetadataUrl,
+  mcpAuthRouter,
+} from '@modelcontextprotocol/sdk/server/auth/router.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import express from 'express'
 import { z } from 'zod'
-import { createAuthVerifier } from './auth'
+import { GoogleOAuthProvider } from './auth/provider'
+import { FirestoreOAuthStorage } from './auth/storage'
 import { loadConfig } from './config'
 import { createLogger } from './logger'
 import { buildDonationsPrompt } from './tools/donations-prompt'
@@ -31,8 +40,7 @@ async function main(): Promise<void> {
 
   const logger = createLogger(config)
 
-  // Launch browser for PDF generation (non-fatal — server works without it,
-  // but generate-letter with format=pdf will fail)
+  // Launch browser for PDF generation (non-fatal)
   const browserResult = await launchBrowser()
   if (browserResult.isErr()) {
     logger.warn(
@@ -43,29 +51,21 @@ async function main(): Promise<void> {
     logger.info('Browser launched for PDF generation')
   }
 
-  // Auth is required unless MCP_ALLOW_ANONYMOUS=true
-  if (!config.GOOGLE_CLIENT_ID || !config.MCP_ALLOWED_DOMAIN) {
-    if (!config.MCP_ALLOW_ANONYMOUS) {
-      logger.error(
-        'GOOGLE_CLIENT_ID and MCP_ALLOWED_DOMAIN are required. ' +
-          'Set MCP_ALLOW_ANONYMOUS=true for local dev without auth.',
-      )
-      process.exit(1)
-    }
-    logger.warn('Auth disabled — MCP_ALLOW_ANONYMOUS is set')
-  }
+  // Set up OAuth storage and provider
+  const storage = new FirestoreOAuthStorage(config.PROJECT_ID)
+  const oauthProvider = new GoogleOAuthProvider({
+    googleClientId: config.GOOGLE_CLIENT_ID,
+    googleClientSecret: config.GOOGLE_CLIENT_SECRET,
+    allowedDomain: config.MCP_ALLOWED_DOMAIN,
+    baseUrl: config.BASE_URL,
+    storage,
+    logger,
+  })
 
-  const verifyAuth =
-    config.GOOGLE_CLIENT_ID && config.MCP_ALLOWED_DOMAIN
-      ? createAuthVerifier(
-          config.GOOGLE_CLIENT_ID,
-          config.MCP_ALLOWED_DOMAIN,
-          logger,
-        )
-      : null
+  const baseUrl = new URL(config.BASE_URL)
 
-  // Track transports per session for stateful connections
-  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>()
+  // Track transports per session
+  const transports = new Map<string, StreamableHTTPServerTransport>()
 
   /**
    * Create and configure a new MCP server instance.
@@ -130,6 +130,7 @@ async function main(): Promise<void> {
       },
     )
 
+    // Tool: generate donor confirmation letter
     mcp.registerTool(
       'generate-letter',
       {
@@ -213,100 +214,125 @@ async function main(): Promise<void> {
     return mcp
   }
 
-  const server = Bun.serve({
-    port: config.PORT,
-    async fetch(request) {
-      const url = new URL(request.url)
+  // ── Express app ────────────────────────────────────────────────
 
-      // Health check — no auth required
-      if (url.pathname === '/health') {
-        return new Response(JSON.stringify({ status: 'ok' }), {
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
+  const app = express()
 
-      // CORS preflight
-      if (request.method === 'OPTIONS' && url.pathname === '/mcp') {
-        return new Response(null, {
-          status: 204,
-          headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers':
-              'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version',
-            'Access-Control-Expose-Headers': 'Mcp-Session-Id',
-          },
-        })
-      }
+  // Cloud Run terminates TLS and forwards via a proxy; trust one hop
+  // so express-rate-limit and req.ip work correctly
+  app.set('trust proxy', 1)
 
-      // MCP endpoint
-      if (url.pathname === '/mcp') {
-        // Authenticate (if enabled)
-        let authInfo: AuthInfo | undefined
-
-        if (verifyAuth) {
-          const authResult = await verifyAuth(request)
-          if (!authResult.ok) {
-            return new Response(
-              JSON.stringify({ error: authResult.error.message }),
-              {
-                status: authResult.error.status,
-                headers: { 'Content-Type': 'application/json' },
-              },
-            )
-          }
-          logger.debug(
-            { email: authResult.user.email },
-            'Authenticated MCP request',
-          )
-          authInfo = authResult.authInfo
-        }
-
-        const sessionId = request.headers.get('mcp-session-id')
-
-        const existingTransport = sessionId
-          ? transports.get(sessionId)
-          : undefined
-        if (existingTransport) {
-          // Existing session — reuse transport
-          const transport = existingTransport
-          const response = await transport.handleRequest(request, {
-            authInfo,
-          })
-          return addCorsHeaders(response)
-        }
-
-        // New session — create transport and MCP server
-        const transport = new WebStandardStreamableHTTPServerTransport({
-          sessionIdGenerator: () => crypto.randomUUID(),
-          onsessioninitialized: (id) => {
-            transports.set(id, transport)
-            logger.info({ sessionId: id }, 'MCP session started')
-          },
-          onsessionclosed: (id) => {
-            transports.delete(id)
-            logger.info({ sessionId: id }, 'MCP session closed')
-          },
-        })
-
-        const mcp = createMcpServerInstance()
-        await mcp.connect(transport)
-
-        const response = await transport.handleRequest(request, {
-          authInfo,
-        })
-        return addCorsHeaders(response)
-      }
-
-      return new Response('Not Found', { status: 404 })
-    },
+  // Health check (no auth)
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok' })
   })
 
-  logger.info({ port: server.port }, 'MCP server started')
+  // Mount OAuth auth router (DCR, authorize, token, metadata)
+  app.use(
+    mcpAuthRouter({
+      provider: oauthProvider,
+      issuerUrl: baseUrl,
+      resourceServerUrl: baseUrl,
+      resourceName: 'Donations ETL MCP Server',
+    }),
+  )
 
+  // Google OAuth callback
+  app.get('/oauth/google/callback', async (req, res) => {
+    try {
+      const code = req.query.code
+      const state = req.query.state
+
+      if (typeof code !== 'string' || typeof state !== 'string') {
+        res.status(400).send('Missing code or state parameter')
+        return
+      }
+
+      const { redirectUrl } = await oauthProvider.handleGoogleCallback(
+        code,
+        state,
+      )
+      res.redirect(redirectUrl)
+    } catch (err) {
+      logger.error({ err }, 'Google OAuth callback failed')
+      res
+        .status(403)
+        .send(err instanceof Error ? err.message : 'Authentication failed')
+    }
+  })
+
+  // Bearer auth middleware for MCP endpoints
+  const bearerAuth = requireBearerAuth({
+    verifier: oauthProvider,
+    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(baseUrl),
+  })
+
+  // MCP Streamable HTTP endpoint — parse JSON body for POST requests
+  // so we can pass it as parsedBody to the transport
+  app.all('/mcp', bearerAuth, express.json(), async (req, res) => {
+    const rawSessionId = req.headers['mcp-session-id']
+    const sessionId =
+      typeof rawSessionId === 'string' ? rawSessionId : undefined
+
+    const existingTransport = sessionId ? transports.get(sessionId) : undefined
+
+    if (existingTransport) {
+      await existingTransport.handleRequest(req, res, req.body)
+      return
+    }
+
+    // New session
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      onsessioninitialized: (id) => {
+        transports.set(id, transport)
+        logger.info({ sessionId: id }, 'MCP session started')
+      },
+      onsessionclosed: (id) => {
+        transports.delete(id)
+        logger.info({ sessionId: id }, 'MCP session closed')
+      },
+    })
+
+    const mcp = createMcpServerInstance()
+    await mcp.connect(transport)
+
+    await transport.handleRequest(req, res, req.body)
+  })
+
+  // Error handler — log unhandled errors with full stack
+  app.use(
+    (
+      err: Error,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      logger.error(
+        { err: { message: err.message, stack: err.stack } },
+        'Unhandled error',
+      )
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'server_error',
+          error_description: err.message,
+        })
+      }
+    },
+  )
+
+  // Start server
+  const server = app.listen(config.PORT, () => {
+    logger.info(
+      { port: config.PORT, baseUrl: config.BASE_URL },
+      'MCP server started',
+    )
+  })
+
+  // Graceful shutdown
   const shutdown = async () => {
     logger.info('Shutting down...')
-    await server.stop()
+    server.close()
     for (const [, transport] of transports) {
       await transport.close()
     }
@@ -320,20 +346,6 @@ async function main(): Promise<void> {
   })
   process.on('SIGINT', () => {
     void shutdown()
-  })
-}
-
-/**
- * Add CORS headers to a response from the transport.
- */
-function addCorsHeaders(response: Response): Response {
-  const headers = new Headers(response.headers)
-  headers.set('Access-Control-Allow-Origin', '*')
-  headers.set('Access-Control-Expose-Headers', 'Mcp-Session-Id')
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
   })
 }
 

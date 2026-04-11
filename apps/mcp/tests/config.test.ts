@@ -8,9 +8,11 @@ describe('ConfigSchema', () => {
   const validEnv = {
     PORT: '8080',
     LOG_LEVEL: 'info',
+    BASE_URL: 'https://mcp.example.com',
     PROJECT_ID: 'test-project',
     DATASET_CANON: 'donations',
     GOOGLE_CLIENT_ID: 'test-client-id.apps.googleusercontent.com',
+    GOOGLE_CLIENT_SECRET: 'test-secret',
     MCP_ALLOWED_DOMAIN: 'example.com',
   }
 
@@ -19,16 +21,16 @@ describe('ConfigSchema', () => {
 
     expect(config.PORT).toBe(8080)
     expect(config.LOG_LEVEL).toBe('info')
+    expect(config.BASE_URL).toBe('https://mcp.example.com')
     expect(config.PROJECT_ID).toBe('test-project')
     expect(config.DATASET_CANON).toBe('donations')
     expect(config.GOOGLE_CLIENT_ID).toBe(
       'test-client-id.apps.googleusercontent.com',
     )
+    expect(config.GOOGLE_CLIENT_SECRET).toBe('test-secret')
     expect(config.MCP_ALLOWED_DOMAIN).toBe('example.com')
     expect(config.ORG_NAME).toBe('Your Organization')
-    expect(config.ORG_ADDRESS).toBe('')
     expect(config.DEFAULT_SIGNER_NAME).toBe('Organization Leader')
-    expect(config.DEFAULT_SIGNER_TITLE).toBe('Director')
   })
 
   it('applies default PORT', () => {
@@ -81,46 +83,33 @@ describe('ConfigSchema', () => {
     ).toThrow()
   })
 
-  it('allows omitting GOOGLE_CLIENT_ID', () => {
-    const config = ConfigSchema.parse({
-      ...validEnv,
-      GOOGLE_CLIENT_ID: undefined,
-    })
-    expect(config.GOOGLE_CLIENT_ID).toBeUndefined()
-  })
-
-  it('allows omitting MCP_ALLOWED_DOMAIN', () => {
-    const config = ConfigSchema.parse({
-      ...validEnv,
-      MCP_ALLOWED_DOMAIN: undefined,
-    })
-    expect(config.MCP_ALLOWED_DOMAIN).toBeUndefined()
-  })
-
-  it('defaults MCP_ALLOW_ANONYMOUS to false', () => {
-    const config = ConfigSchema.parse(validEnv)
-    expect(config.MCP_ALLOW_ANONYMOUS).toBe(false)
-  })
-
-  it('parses MCP_ALLOW_ANONYMOUS=true', () => {
-    const config = ConfigSchema.parse({
-      ...validEnv,
-      MCP_ALLOW_ANONYMOUS: 'true',
-    })
-    expect(config.MCP_ALLOW_ANONYMOUS).toBe(true)
-  })
-
-  it('parses MCP_ALLOW_ANONYMOUS=false', () => {
-    const config = ConfigSchema.parse({
-      ...validEnv,
-      MCP_ALLOW_ANONYMOUS: 'false',
-    })
-    expect(config.MCP_ALLOW_ANONYMOUS).toBe(false)
-  })
-
-  it('rejects invalid MCP_ALLOW_ANONYMOUS', () => {
+  it('rejects missing GOOGLE_CLIENT_ID', () => {
     expect(() =>
-      ConfigSchema.parse({ ...validEnv, MCP_ALLOW_ANONYMOUS: 'yes' }),
+      ConfigSchema.parse({ ...validEnv, GOOGLE_CLIENT_ID: undefined }),
+    ).toThrow()
+  })
+
+  it('rejects missing GOOGLE_CLIENT_SECRET', () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validEnv, GOOGLE_CLIENT_SECRET: undefined }),
+    ).toThrow()
+  })
+
+  it('rejects missing MCP_ALLOWED_DOMAIN', () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validEnv, MCP_ALLOWED_DOMAIN: undefined }),
+    ).toThrow()
+  })
+
+  it('rejects missing BASE_URL', () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validEnv, BASE_URL: undefined }),
+    ).toThrow()
+  })
+
+  it('rejects invalid BASE_URL', () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validEnv, BASE_URL: 'not-a-url' }),
     ).toThrow()
   })
 
@@ -146,7 +135,9 @@ describe('loadConfig', () => {
 
   beforeEach(() => {
     process.env.PROJECT_ID = 'test-project'
+    process.env.BASE_URL = 'https://mcp.example.com'
     process.env.GOOGLE_CLIENT_ID = 'test-client-id'
+    process.env.GOOGLE_CLIENT_SECRET = 'test-secret'
     process.env.MCP_ALLOWED_DOMAIN = 'example.com'
   })
 

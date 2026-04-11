@@ -190,6 +190,7 @@ export default defineConfig(
     files: [
       'actions/*/index.ts',
       'apps/*/src/main.ts',
+      'apps/mcp/src/auth/provider.ts',
       'scripts/**/*.ts',
       '**/*.test.ts',
       '**/*.spec.ts',

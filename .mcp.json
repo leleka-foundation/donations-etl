@@ -1,8 +1,12 @@
 {
   "mcpServers": {
-    "donations": {
+    "donations-local": {
       "type": "http",
       "url": "http://localhost:8080/mcp"
+    },
+    "donations": {
+      "type": "http",
+      "url": "https://mcp-server-u5atmmvqqq-uc.a.run.app/mcp"
     }
   }
 }

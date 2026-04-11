@@ -59,6 +59,7 @@ RUNTIME_SA="${RUNTIME_SA:-donations-etl-sa}"
 RUNTIME_SA_EMAIL="${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID must be set}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET must be set}"
 MCP_ALLOWED_DOMAIN="${MCP_ALLOWED_DOMAIN:?MCP_ALLOWED_DOMAIN must be set}"
 
 SERVICE_NAME="mcp-server"
@@ -93,6 +94,36 @@ fi
 
 echo ""
 
+# ── Firestore ────────────────────────────────────────────────────
+
+log "Ensuring Firestore is provisioned..."
+if [[ "$DRY_RUN" != "true" ]]; then
+  # Enable the API (idempotent)
+  gcloud services enable firestore.googleapis.com \
+    --project="${PROJECT_ID}" --quiet >/dev/null 2>&1
+
+  # Create the default database if it doesn't exist
+  if ! gcloud firestore databases describe \
+      --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    log "  Creating Firestore database in ${REGION}..."
+    gcloud firestore databases create \
+      --project="${PROJECT_ID}" \
+      --location="${REGION}" \
+      --type=firestore-native \
+      --quiet >/dev/null 2>&1
+  fi
+
+  # Grant the runtime SA access
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+    --role="roles/datastore.user" \
+    --condition=None \
+    --quiet >/dev/null 2>&1
+  log "  Firestore ready"
+fi
+
+echo ""
+
 # ── GCP Secrets ───────────────────────────────────────────────────
 
 if [[ "$SKIP_SECRETS" == "true" ]]; then
@@ -120,6 +151,7 @@ else
     log "  ${name} — set"
   }
 
+  ensure_secret "MCP_GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET}"
   ensure_secret "ORG_NAME" "${ORG_NAME:-}"
   ensure_secret "ORG_ADDRESS" "${ORG_ADDRESS:-}"
   ensure_secret "ORG_MISSION" "${ORG_MISSION:-}"
@@ -130,7 +162,7 @@ else
   # Grant SA access to secrets
   if [[ "$DRY_RUN" != "true" ]]; then
     log "Granting ${RUNTIME_SA} access to secrets..."
-    for SECRET_NAME in ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
+    for SECRET_NAME in MCP_GOOGLE_CLIENT_SECRET ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
       gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -170,6 +202,22 @@ log "Deploying Cloud Run Service..."
 if [[ "$DRY_RUN" == "true" ]]; then
   log "  Would deploy ${SERVICE_NAME} to Cloud Run"
 else
+  # If the service already exists, read its URL so we can deploy with
+  # the correct BASE_URL in a single step. Otherwise, use a placeholder
+  # and patch it after the first deploy creates the service.
+  EXISTING_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}" \
+    --format='value(status.url)' 2>/dev/null || echo '')
+
+  if [[ -n "${EXISTING_URL}" ]]; then
+    BASE_URL_VALUE="${EXISTING_URL}"
+    log "  Reusing existing service URL: ${BASE_URL_VALUE}"
+  else
+    BASE_URL_VALUE="https://placeholder.example.com"
+    log "  First deploy — BASE_URL will be patched after the service is created"
+  fi
+
   gcloud run deploy "${SERVICE_NAME}" \
     --region "${REGION}" \
     --project "${PROJECT_ID}" \
@@ -179,8 +227,10 @@ else
 PROJECT_ID=${PROJECT_ID},\
 DATASET_CANON=${DATASET_CANON},\
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},\
-MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN}" \
+MCP_ALLOWED_DOMAIN=${MCP_ALLOWED_DOMAIN},\
+BASE_URL=${BASE_URL_VALUE}" \
     --set-secrets "\
+GOOGLE_CLIENT_SECRET=MCP_GOOGLE_CLIENT_SECRET:latest,\
 ORG_NAME=ORG_NAME:latest,\
 ORG_ADDRESS=ORG_ADDRESS:latest,\
 ORG_MISSION=ORG_MISSION:latest,\
@@ -196,6 +246,23 @@ DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
     --allow-unauthenticated \
     --quiet
 
+  # Read the actual service URL (it's stable across deploys, so for
+  # redeploys this matches what we already passed in)
+  SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+    --region "${REGION}" \
+    --project "${PROJECT_ID}" \
+    --format='value(status.url)')
+
+  # Only patch BASE_URL on the first deploy (when we used the placeholder)
+  if [[ "${BASE_URL_VALUE}" != "${SERVICE_URL}" ]]; then
+    log "Patching BASE_URL to ${SERVICE_URL}..."
+    gcloud run services update "${SERVICE_NAME}" \
+      --region "${REGION}" \
+      --project "${PROJECT_ID}" \
+      --update-env-vars "BASE_URL=${SERVICE_URL}" \
+      --quiet
+  fi
+
   log "Deploy complete."
 fi
 
@@ -204,11 +271,6 @@ echo ""
 # ── Summary ───────────────────────────────────────────────────────
 
 if [[ "$DRY_RUN" == "false" ]]; then
-  SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
-    --region "${REGION}" \
-    --project "${PROJECT_ID}" \
-    --format='value(status.url)')
-
   echo ""
   log "Done!"
   echo ""
@@ -216,11 +278,14 @@ if [[ "$DRY_RUN" == "false" ]]; then
   info "MCP endpoint: ${SERVICE_URL}/mcp"
   info "Health check: curl ${SERVICE_URL}/health"
   echo ""
-  info "Claude Code config (add to ~/.claude/settings.json):"
+  info "Google OAuth redirect URI (add to GCP Console):"
+  info "  ${SERVICE_URL}/oauth/google/callback"
+  echo ""
+  info "Add to .mcp.json:"
   echo ""
   echo "  \"mcpServers\": {"
   echo "    \"donations\": {"
-  echo "      \"type\": \"url\","
+  echo "      \"type\": \"http\","
   echo "      \"url\": \"${SERVICE_URL}/mcp\""
   echo "    }"
   echo "  }"
