@@ -1,4 +1,21 @@
-# donations-etl
+# A software toolkit for US non-profits
+
+This is a set of useful tools for running a non-profit in the US. It is only useful if you use an LLM. The setup requires some familiarity with software development - you won't need to write code, but you should understand what _deployment_, _database_, _MCP_, and a few other concepts mean.
+
+The toolkit provides:
+
+- A way to gather all donations via different sources (PayPal, fundraising platforms, ACH, checks, etc) into a single easily queryable database.
+- A connector for ChatGPT and Claude to ask questions about your donations, run reports, prepare donor letters, etc., based on that unified database.
+
+## Getting started (software development skills required)
+
+Fork this repo, clone your fork, `cd` into it, and run your assistant. I use `claude`. `codex`, `gemini`, etc. should also work but I have not tested them).
+
+Ask your assistant what this toolkit can do, then ask it to set things up. We use BigQuery as the database, deploy to GCP, and use Slack. If you have other preferences, discuss them with your assistants and it will help you.
+
+If you choose to deploy the MCP server and then connect to your ChatGPT or Claude to it, you will be able to ask questions like "how much did we raise last month" or "generate a thank you letter to John Smith for his donations in 2025".
+
+You can also deploy it as a Slack bot and ask it similar questions.
 
 ## What this does
 
