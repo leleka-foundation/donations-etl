@@ -80,7 +80,9 @@
         "@donations-etl/letter": "workspace:*",
       },
       "peerDependencies": {
+        "@google-cloud/firestore": "^8.0.0",
         "@modelcontextprotocol/sdk": "^1.29.0",
+        "express": "^5.0.0",
         "google-auth-library": "^10.0.0",
         "neverthrow": "^8.0.0",
         "pino": "^10.0.0",
