@@ -261,6 +261,37 @@ describe('GoogleOAuthProvider', () => {
         ),
       ).rejects.toThrow('already used')
     })
+
+    it('returns 7-day expires_in on success', async () => {
+      // Access tokens deliberately have a long TTL (7 days) because
+      // claude.ai does not auto-refresh on 401 during normal use — only
+      // when the user visits the Connections page. A short TTL produces
+      // background 401s that flag the connector as broken.
+      const sevenDaysSeconds = 7 * 24 * 60 * 60
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.markTokenExchangeUsed).mockResolvedValue(true)
+      vi.mocked(storage.getTokenExchange).mockResolvedValue({
+        accessToken: 'access',
+        used: true,
+      })
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        clientId: 'c1',
+        userId: 'u1',
+        userEmail: 'u@example.com',
+        userDomain: 'example.com',
+        issuedAt: now,
+        expiresAt: now + sevenDaysSeconds,
+      })
+
+      const tokens = await provider.exchangeAuthorizationCode(
+        { client_id: 'c1', client_id_issued_at: 0, redirect_uris: [] },
+        'code',
+      )
+
+      expect(tokens.expires_in).toBe(sevenDaysSeconds)
+    })
   })
 
   describe('verifyAccessToken', () => {
@@ -590,6 +621,7 @@ describe('GoogleOAuthProvider', () => {
       expect(tokens.access_token).not.toBe('old-access')
       expect(tokens.refresh_token).toBeTruthy()
       expect(tokens.refresh_token).not.toBe('old-refresh')
+      expect(tokens.expires_in).toBe(7 * 24 * 60 * 60)
       expect(storage.deleteInstallation).toHaveBeenCalledWith('old-access')
       expect(storage.deleteRefreshMapping).toHaveBeenCalledWith('old-refresh')
     })

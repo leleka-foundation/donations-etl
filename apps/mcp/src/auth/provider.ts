@@ -26,8 +26,23 @@ import { z } from 'zod'
 import type { OAuthStorage } from './storage'
 import { generateToken, tokenFingerprint } from './storage'
 
-/** Token lifetime: 1 hour */
-const TOKEN_LIFETIME_S = 3600
+/**
+ * Access-token lifetime: 7 days.
+ *
+ * Claude.ai's connector UI marks the connector as broken after sustained
+ * background 401s on `/mcp`, and it does not attempt a refresh while in
+ * that state — only when the user opens the Connections page. A short
+ * TTL (e.g. 1h) therefore guarantees daily disconnects even though the
+ * refresh flow works correctly. A long TTL keeps the access token alive
+ * across normal idle periods so 401s stop happening in the background.
+ *
+ * Refresh tokens still rotate on every use, so a leaked access token is
+ * bounded by this TTL or by the next refresh, whichever comes first.
+ * The MCP server is single-tenant and restricted to one Workspace
+ * domain (`MCP_ALLOWED_DOMAIN`); the surface a leaked token would expose
+ * is donations queries and letter generation for that one org.
+ */
+const TOKEN_LIFETIME_S = 7 * 24 * 60 * 60
 
 /**
  * Zod schema for the Google token endpoint response.
