@@ -4,85 +4,83 @@ Branch: `mcp/improvements-disconnects-and-compliance-distribution`
 
 Two independent workstreams, can ship as separate PRs:
 
-1. **Stabilize the deployed MCP server** so adding it as a Claude.ai/Cowork connector doesn't lead to frequent disconnects.
-2. **Expose compliance tooling to non-engineer teammates** via the same MCP server, plus a Slack-command path.
+1. **Stabilize the deployed MCP server** so adding it as a Claude.ai/Cowork connector doesn't lead to frequent disconnects. **Effectively shipped 2026-05-20 — observing in production.**
+2. **Expose compliance tooling to non-engineer teammates** via the same MCP server, plus a Slack-command path. **Not started.**
 
-The plan first explains what I found, then lists concrete tasks as a checklist (see `CHECKLIST.md`). Acceptance gates from `.claude/rules/*` apply: TDD, 100% coverage on new code, `bun typecheck`/`lint`/`test:run` all green, no `any`, no `as` (except documented JSONB), Zod on all external data.
+Acceptance gates from `.claude/rules/*` apply throughout: TDD, 100% coverage on new code, `bun typecheck`/`lint`/`test:run` all green, no `any`, no `as` (except documented JSONB), Zod on all external data.
 
 ---
 
 ## Workstream 1 — Disconnect fix
 
-### What I found
+### Status
 
-The deployed Cloud Run service `mcp-server` (project `leleka-data-373104`, region `us-central1`) is configured:
+| Item                                                                 | State                                 | Where                                  |
+| -------------------------------------------------------------------- | ------------------------------------- | -------------------------------------- |
+| Diagnostic logging on the OAuth flow                                 | **Shipped**                           | commit `66dd3c6`, revision `00022-6mm` |
+| Access-token TTL 1h → 7d                                             | **Shipped**                           | commit `b244572`, revision `00023-b7z` |
+| Draft PR opened                                                      | **Open**                              | leleka-foundation/nonprofit-toolkit#18 |
+| Cloud Run session affinity                                           | **Deferred** — not needed in practice | —                                      |
+| `no-cpu-throttling`                                                  | **Deferred** — not needed in practice | —                                      |
+| Stateless `StreamableHTTPServerTransport`                            | **Deferred** — not needed in practice | —                                      |
+| Resource-metadata 404 on `/.well-known/oauth-protected-resource/mcp` | **Open, low priority**                | —                                      |
 
-- `maxScale: 3`, no `minScale` (scales to zero)
-- `containerConcurrency: 80`
-- CPU `1`, memory `1Gi`
-- No `run.googleapis.com/sessionAffinity` annotation → **session affinity disabled**
-- No `run.googleapis.com/cpu-throttling` annotation → **CPU only during request processing**
-- Timeout 120s (caps SSE long-poll length)
-- Latest revision: `mcp-server-00020-cm9`
+### What I originally hypothesized
 
-Code-side facts:
+The deployed Cloud Run service `mcp-server` keeps an in-memory `Map<sessionId, transport>` (`apps/mcp/src/main.ts:68`), has no Cloud Run session-affinity annotation, and CPU is throttled between requests. The initial reading of the logs interpreted repeated `MCP session started` events as the wrong-instance bug — sessions lost when Cloud Run round-robins between instances. That story was wrong for the actual symptom the user described (overnight connector "disabled").
 
-- `apps/mcp/src/main.ts:68` keeps an in-memory `Map<sessionId, transport>`. Streamable HTTP sessions are not shared across instances.
-- `apps/mcp/src/auth/provider.ts:30` defines `TOKEN_LIFETIME_S = 3600` (1 hour). Refresh tokens last 7 days (`INSTALLATION_TTL_MS`).
-- `mcpAuthRouter` is mounted from the SDK without an explicit `serviceDocumentationUrl`; observed log shows a 404 on `GET /.well-known/oauth-protected-resource/mcp` (path-suffixed metadata per RFC 9728), which some clients probe.
-- Logs from the last 48h show repeated `MCP session started` events from a single `Claude-User` client within seconds — every new request that lands on a different instance manufactures a new session.
-- Logs show recurring 401 bursts on `/mcp` from both `Claude-User` and `python-httpx`, consistent with 1h token expiry + re-auth cycles.
+### What we actually found, after shipping diagnostic logging
 
-### Likely root causes (in order of impact)
+Today's logs (2026-05-20) showed:
 
-1. **In-memory sessions + no Cloud Run session affinity.** A client's followup requests get round-robined across instances. The wrong instance has no entry in its `transports` map, so it creates a new session. Some clients interpret the changed `mcp-session-id` as a disconnect.
-2. **CPU throttled between requests.** Streamable HTTP can hold an SSE stream open; with CPU off between events, the upstream can drop the connection. Cloud Run's 120s request timeout is also a hard ceiling on any single SSE response.
-3. **Short 1h access-token lifetime** amplifies #1: even with refresh working, hourly token rotations multiply the chance of a session-routing miss.
-4. **Resource-metadata 404** on `/.well-known/oauth-protected-resource/mcp` may cause some clients to fall back to a less reliable discovery path.
+- **The refresh flow works correctly.** A token issued the previous day refreshed cleanly: every `exchangeRefreshToken:*` log line fired in order — `start` → `refresh mapping found` → `installation found` → `success`. No 400s.
+- **Claude.ai does not auto-refresh on background 401s.** Two separate 401 bursts on `/mcp` (12:14 and 14:57) saw no follow-up `/token` request. Claude.ai kept hammering `/mcp` with the expired access token, getting 401s, never attempting a refresh.
+- **The refresh only happens when the user opens the Connections page.** At 16:49 the user opened Connections; claude.ai immediately sent a `/token` request; refresh succeeded; tools resumed. No re-auth, no Google sign-in, just a successful token rotation.
 
-### Approach (minimum + stateless session option)
+The earlier 400 bursts (05-14, 05-18 04:06) seen in the older logs were probably a separate, transient cause — possibly DCR client expiry on the claude.ai side, or local state churn. They have not recurred since the instrumentation went in.
 
-Order matters: do the cheap infra changes first, then the code change.
+### Actual root cause
 
-1. **Cloud Run config (no code, immediate effect)**
-   - Enable session affinity: `--session-affinity` on `gcloud run services update`.
-   - Set CPU always allocated: `--no-cpu-throttling`.
-   - Leave `minScale` at 0 (scale-to-zero) — keep costs down. Cold-start hits are tolerable.
-   - Increase request timeout to the maximum useful for SSE (e.g. 3600s) if we keep SSE; with stateless mode, default 300s is fine.
-   - Verify with `gcloud run services describe` and a probe.
+**Short access-token TTL × claude.ai's 401 polling behavior.** With `TOKEN_LIFETIME_S = 3600` (1h), the access token expires every hour during normal idle. Claude.ai's background `/mcp` polls hit 401, and after enough of them claude.ai's UI flags the connector as broken — without ever attempting the refresh that would fix it. The "broken" state is only cleared by a user-initiated Connections-page visit.
 
-2. **Token lifetime**
-   - Change `TOKEN_LIFETIME_S` to `8 * 3600` (8h). Long enough for a workday, short enough that the refresh path is still exercised. Refresh-token lifetime stays 7d.
-   - Update tests for the new constant.
+This is the dominant disconnect signal. Session routing and CPU throttling may still matter in edge cases (SSE streams in particular), but they're not what was making the connector look broken overnight.
 
-3. **Resource-metadata discovery**
-   - Investigate the path-suffix discovery probe (`/.well-known/oauth-protected-resource/mcp`) and either route it to the existing metadata handler or document why it's safe to 404.
-   - Add a regression test that the metadata is fetchable at both the canonical path and at the sub-path probe.
+### What shipped
 
-4. **Stateless StreamableHTTPServerTransport** (the "+ stateless session option")
-   - The MCP SDK's `StreamableHTTPServerTransport` supports a stateless mode (no `sessionIdGenerator`) where every request creates a fresh transport, the server returns no `Mcp-Session-Id` header, and clients don't need to pin to one instance.
-   - Trade-off: prompts, resource subscriptions, server-initiated events are unavailable in stateless mode. We currently use one prompt (`donations-schema`) — the prompt is read-only and re-fetched on demand, so this is fine.
-   - Switching to stateless removes the in-memory `Map` entirely and makes session affinity unnecessary. Affinity is still worth enabling as belt-and-suspenders.
-   - Verify by ablation: confirm `tools/list`, `tools/call`, and `prompts/get` all still work for both `Claude-User` (claude.ai) and the local Claude Code client.
+1. **Diagnostic logging** (commit `66dd3c6`)
+   - New `tokenFingerprint(token)` helper (first 12 hex of SHA256, matches Firestore doc-id prefix for cross-reference).
+   - `apps/mcp/src/auth/provider.ts`: structured logs at every decision point in `exchangeRefreshToken`, `exchangeAuthorizationCode`, `verifyAccessToken`, `revokeToken`.
+   - `apps/mcp/src/auth/audit-log.ts` (new): `tokenAuditLogger` middleware mounted before `mcpAuthRouter` for `/token`. Captures the redacted request shape on entry and the response status on finish — catches errors the SDK swallows in `authenticateClient` before our provider sees them.
 
-5. **Observability**
-   - Add structured logs on 401 and on session creation that include `clientId` and `userEmail` so we can tell whether disconnects are token, session, or client-side issues.
-   - Add a `/livez` and `/readyz` distinction if needed (currently only `/health`). Probably not needed; flag if Cloud Run startup probe is the issue.
+2. **Access-token TTL 1h → 7d** (commit `b244572`)
+   - `TOKEN_LIFETIME_S = 7 * 24 * 60 * 60`.
+   - Comment in the code documents the claude.ai behavior + the security tradeoff (single-tenant server, scope of leaked-token impact bounded by `MCP_ALLOWED_DOMAIN`).
+   - Refresh tokens still rotate on every use; effective leak window is `min(7d, next-refresh)`.
+
+3. **No behavior change to the transport, session map, or Cloud Run config.** The session-affinity / no-cpu-throttling / stateless-transport changes from the original plan are not needed if the 7-day TTL kills the disconnect signal in practice.
+
+### What's still open (low priority)
+
+- **Resource-metadata 404** on `GET /.well-known/oauth-protected-resource/mcp` — some clients probe a path-suffixed metadata URL per RFC 9728. The SDK only serves the canonical path. Investigate whether claude.ai uses the suffixed URL and whether the 404 has any user-visible effect. Probably harmless. Easy fix if needed: route the suffix to the canonical handler.
 
 ### Verification
 
-- Manual: connect Claude.ai to the deployed server, call `query-bigquery` repeatedly over a 30-minute window with idle gaps, count disconnects. Baseline first, then re-measure after deploy.
-- Manual: leave the local `donations-local` MCP idle for >1h and observe whether token refresh succeeds without re-prompting the user.
-- Unit tests for the new token lifetime + stateless transport plumbing.
+- ✅ Unit tests for new logging + new TTL constant. `bun test:coverage` 100% on all changed files. 2447 tests pass.
+- ⏳ **Production observation.** Watch the deployed mcp-server over the next 1–2 weeks. Success criterion: no spontaneous "connector disabled" reports from teammates, no daily 400-burst pattern in `/token` logs.
+- 🔍 **If a disconnect does recur**, the diagnostic logging will show exactly which path failed (audit-only / `refresh mapping not found` / `installation not found` / `verifyAccessToken: token expired`). The fix then follows from the signal.
 
 ### Out of scope
 
-- Migrating session state to Firestore (the "full hardening" option). Stateless mode achieves the same robustness for our tool surface without that cost.
-- Changing the OAuth flow itself.
+- Migrating session state to Firestore. Not needed for our tool surface (no notifications, no resource subscriptions, no progress streams).
+- Switching to stateless `StreamableHTTPServerTransport`. Was on the original plan as a belt-and-suspenders; deferred unless production observation shows it's needed.
+- Cloud Run session affinity. Same rationale — only worth doing if production observation surfaces a residual problem.
+- Changing the OAuth flow itself or rotating to Firestore-TTL'd documents.
 
 ---
 
 ## Workstream 2 — Compliance access for non-engineer teammates
+
+**Status: not started.** This section is unchanged from the original plan.
 
 ### What I found
 
@@ -162,15 +160,11 @@ The existing prompt `donations-schema` only describes the donations table. Add a
 
 ## Sequencing
 
-Two PRs is cleanest:
-
-- **PR 1 (Workstream 1):** disconnect stabilization. Small, infra-heavy. Ship and observe for a few days before piling more tools onto the server.
-- **PR 2 (Workstream 2):** compliance tools + Slack commands + team docs.
-
-If you'd rather collapse into one PR, fine — the workstreams don't touch the same files except both add code under `apps/mcp/`. I'll note this in the checklist.
+- **PR 1 (Workstream 1):** disconnect stabilization. **Open as draft** — leleka-foundation/nonprofit-toolkit#18. Contains diagnostic logging + 7-day token TTL. Promote out of draft once production observation confirms no recurring disconnects.
+- **PR 2 (Workstream 2):** compliance tools + Slack commands + team docs. Not started.
 
 ## Open questions for the user
 
-1. **Cowork connector mechanism.** I'm assuming Cowork uses the same MCP connector model as Claude.ai (paste URL, Google OAuth). If Cowork requires a different distribution channel (org-level connector approval, marketplace listing, etc.), I need to know before writing the teammate docs.
-2. **Token lifetime.** 8h is a workday; 24h covers overnight. Preference?
+1. **Cowork connector mechanism.** Assuming Cowork uses the same MCP connector model as Claude.ai (paste URL, Google OAuth). If Cowork requires a different distribution channel (org-level connector approval, marketplace listing, etc.), need confirmation before writing the teammate docs.
+2. ~~**Token lifetime.**~~ **Resolved 2026-05-20: 7 days.**
 3. **Slack `/compliance-discover` policy.** This command can run for ~2 min and post a long report. Should it post into the channel where invoked, DM the invoker, or always post into a dedicated `#compliance` channel?

@@ -1,53 +1,60 @@
 # MCP Server Improvements — Checklist
 
-Companion to `PLAN.md`. Tick items as they land. Each workstream is a separate PR unless we decide otherwise.
+Companion to `PLAN.md`. Tick items as they land.
 
 ## Workstream 1 — Disconnect fix
 
-### Cloud Run configuration
+PR: [leleka-foundation/nonprofit-toolkit#18](https://github.com/leleka-foundation/nonprofit-toolkit/pull/18) (draft).
 
-- [ ] Enable session affinity on the `mcp-server` service (`gcloud run services update mcp-server --region us-central1 --session-affinity`).
-- [ ] Set CPU always allocated (`--no-cpu-throttling`).
-- [ ] Leave `min-instances` at 0 (scale-to-zero) to keep costs down.
-- [ ] Confirm new config with `gcloud run services describe mcp-server --region us-central1` and capture the diff in PR description.
-- [ ] Smoke-test: hit `/health` and a `tools/list` from the deployed URL.
+### Diagnostic logging — shipped 2026-05-18 (commit `66dd3c6`)
 
-### Token lifetime
+- [x] Export `tokenFingerprint(token)` from `apps/mcp/src/auth/storage.ts`.
+- [x] Add structured logging at every decision point in `apps/mcp/src/auth/provider.ts` (`exchangeRefreshToken`, `exchangeAuthorizationCode`, `verifyAccessToken`, `revokeToken`).
+- [x] Create `apps/mcp/src/auth/audit-log.ts` with `summarizeTokenRequest` + `tokenAuditLogger` middleware (Zod-validated, no secret values in logs).
+- [x] Mount `tokenAuditLogger` before `mcpAuthRouter` for `/token` in `apps/mcp/src/main.ts`.
+- [x] Tests: 16 audit-log + 9 new provider diagnostic tests + 4 fingerprint tests. 100% coverage on new files.
+- [x] Deployed (revision `mcp-server-00022-6mm`); smoke-tested with a bogus refresh-token POST and confirmed audit log fired with correct fingerprint.
 
-- [ ] Change `TOKEN_LIFETIME_S` in `apps/mcp/src/auth/provider.ts` from 3600 to 28800 (8h) — or 86400 (24h) if user prefers.
-- [ ] Update the unit tests that assert `expires_in` and installation expiry.
-- [ ] Verify refresh-token flow still rotates correctly with the new lifetime.
+### Access-token TTL — shipped 2026-05-20 (commit `b244572`)
 
-### Resource-metadata discovery
+- [x] Change `TOKEN_LIFETIME_S` in `apps/mcp/src/auth/provider.ts` from `3600` to `7 * 24 * 60 * 60` with explanatory comment.
+- [x] Update unit tests to assert the new `expires_in` value.
+- [x] Verify refresh-token flow still rotates correctly with the new lifetime.
+- [x] Deployed (revision `mcp-server-00023-b7z`).
 
-- [ ] Reproduce the 404 on `GET /.well-known/oauth-protected-resource/mcp` locally.
-- [ ] Route the sub-path probe to the canonical metadata handler, or document why the 404 is harmless.
-- [ ] Add a regression test asserting both metadata endpoints return the expected JSON shape.
+### Resource-metadata discovery — open, low priority
 
-### Stateless transport
+- [ ] Confirm whether claude.ai actually relies on `GET /.well-known/oauth-protected-resource/mcp`. If yes, route the suffix to the canonical metadata handler. If not, document why the 404 is harmless and close.
+- [ ] Add a regression test for whichever decision we make.
 
-- [ ] RED: write a test that posts two `tools/list` requests without a `Mcp-Session-Id` header and asserts both succeed (will fail today because the SDK requires session init first).
-- [ ] GREEN: switch `StreamableHTTPServerTransport` to stateless mode in `apps/mcp/src/main.ts` (omit `sessionIdGenerator`, drop the in-memory `transports` map, build a fresh transport per request).
-- [ ] Confirm the `donations-schema` prompt still resolves via `prompts/get`.
-- [ ] Confirm `tools/list` and `tools/call` for `query-bigquery` and `generate-letter` still work end-to-end.
-- [ ] Remove now-dead session-lifecycle logging (`onsessioninitialized`, `onsessionclosed`).
+### Cloud Run configuration — deferred
 
-### Observability
+These were on the original plan; with the TTL fix they appear unnecessary. Revisit only if production observation shows a residual disconnect signal.
 
-- [ ] Add structured logging on 401 paths so we can distinguish token-expired vs. unknown-installation vs. domain-mismatch.
-- [ ] (Optional) Add a `clientId`/`userEmail` field to tool-call logs.
+- [ ] ~~Enable session affinity~~ — deferred.
+- [ ] ~~Set CPU always allocated~~ — deferred.
+- [x] Leave `min-instances` at 0 (scale-to-zero) — confirmed; keep costs down.
 
-### Acceptance + deploy
+### Stateless transport — deferred
 
-- [ ] `bun typecheck` zero errors.
-- [ ] `bun lint` zero errors, zero warnings.
-- [ ] `bun test:run` all green.
-- [ ] `bun test:coverage` 100% on all new/changed files in `apps/mcp/`.
-- [ ] Cloud Build + deploy a new revision; verify the new annotations are present.
-- [ ] Baseline disconnect count from `claude.ai` over a 30-minute idle window; re-measure after deploy; record both numbers in the PR.
-- [ ] Open PR. Title: `mcp: stabilize sessions, longer token TTL, stateless transport`.
+Same rationale; revisit only if needed.
+
+- [ ] ~~Switch `StreamableHTTPServerTransport` to stateless mode~~ — deferred.
+
+### Acceptance + observation
+
+- [x] `bun typecheck` zero errors.
+- [x] `bun lint` zero errors, zero warnings.
+- [x] `bun test:run` all green (2447 pass, +29 over baseline).
+- [x] `bun test:coverage` 100% on all new/changed files in `apps/mcp/`.
+- [x] Cloud Build + deploy.
+- [x] Draft PR opened.
+- [ ] **Production observation, 1–2 weeks**: monitor `/token` and `/mcp` logs. Success criterion: no spontaneous "connector disabled" reports and no daily 400-burst pattern. If a disconnect recurs, pull the matching audit-log / provider log lines to identify which path failed; fix follows from the signal.
+- [ ] **Promote PR out of draft** once observation passes.
 
 ## Workstream 2 — Compliance access for non-engineers
+
+**Not started.**
 
 ### MCP tools
 
@@ -92,5 +99,5 @@ Companion to `PLAN.md`. Tick items as they land. Each workstream is a separate P
 
 ## Cross-PR hygiene
 
-- [ ] Confirm `docs/mcp-improvements/PLAN.md` and `CHECKLIST.md` reflect any course corrections discovered during implementation. Update before requesting review.
+- [x] Keep `docs/mcp-improvements/PLAN.md` and `CHECKLIST.md` reflective of actual state. Last revision: 2026-05-20.
 - [ ] After both PRs merge, update `MEMORY.md` (auto-memory) to note that compliance tools are now reachable via MCP + Slack, so future skills don't assume "local only".
