@@ -6,8 +6,35 @@ import pino from 'pino'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleOAuthProvider } from '../src/auth/provider'
 import type { OAuthStorage } from '../src/auth/storage'
+import { tokenFingerprint } from '../src/auth/storage'
 
 const mockLogger = pino({ level: 'silent' })
+
+/**
+ * Build a silent pino logger plus spies on every level method. Each spy
+ * captures (firstArg, msg) calls so tests can assert on structured log
+ * payloads emitted by the provider.
+ */
+function buildCapturingLogger() {
+  const logger = pino({ level: 'silent' })
+  const records: { level: string; msg: string; payload: object }[] = []
+  for (const level of ['info', 'warn', 'error', 'debug'] as const) {
+    vi.spyOn(logger, level).mockImplementation((...args: unknown[]) => {
+      const [first, second] = args
+      if (typeof first === 'object' && first !== null) {
+        records.push({
+          level,
+          msg: typeof second === 'string' ? second : '',
+
+          payload: first,
+        })
+      } else if (typeof first === 'string') {
+        records.push({ level, msg: first, payload: {} })
+      }
+    })
+  }
+  return { logger, records }
+}
 
 function createMockStorage(): OAuthStorage {
   return {
@@ -234,6 +261,37 @@ describe('GoogleOAuthProvider', () => {
         ),
       ).rejects.toThrow('already used')
     })
+
+    it('returns 7-day expires_in on success', async () => {
+      // Access tokens deliberately have a long TTL (7 days) because
+      // claude.ai does not auto-refresh on 401 during normal use — only
+      // when the user visits the Connections page. A short TTL produces
+      // background 401s that flag the connector as broken.
+      const sevenDaysSeconds = 7 * 24 * 60 * 60
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.markTokenExchangeUsed).mockResolvedValue(true)
+      vi.mocked(storage.getTokenExchange).mockResolvedValue({
+        accessToken: 'access',
+        used: true,
+      })
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        clientId: 'c1',
+        userId: 'u1',
+        userEmail: 'u@example.com',
+        userDomain: 'example.com',
+        issuedAt: now,
+        expiresAt: now + sevenDaysSeconds,
+      })
+
+      const tokens = await provider.exchangeAuthorizationCode(
+        { client_id: 'c1', client_id_issued_at: 0, redirect_uris: [] },
+        'code',
+      )
+
+      expect(tokens.expires_in).toBe(sevenDaysSeconds)
+    })
   })
 
   describe('verifyAccessToken', () => {
@@ -283,6 +341,254 @@ describe('GoogleOAuthProvider', () => {
     })
   })
 
+  describe('diagnostic logging', () => {
+    it('logs each step of a successful refresh-token exchange', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.getAccessTokenForRefresh).mockResolvedValue(
+        'old-access',
+      )
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+        clientId: 'client1',
+        userId: 'user1',
+        userEmail: 'user@example.com',
+        userDomain: 'example.com',
+        issuedAt: now - 7200,
+        expiresAt: now - 100,
+      })
+
+      await providerWithLog.exchangeRefreshToken(
+        { client_id: 'client1', client_id_issued_at: 0, redirect_uris: [] },
+        'old-refresh',
+      )
+
+      const messages = records.map((r) => r.msg)
+      expect(messages).toContain('exchangeRefreshToken: start')
+      expect(messages).toContain('exchangeRefreshToken: refresh mapping found')
+      expect(messages).toContain('exchangeRefreshToken: installation found')
+      expect(messages).toContain('exchangeRefreshToken: success')
+      const start = records.find((r) => r.msg === 'exchangeRefreshToken: start')
+      expect(start?.payload).toMatchObject({
+        refreshTokenFingerprint: tokenFingerprint('old-refresh'),
+        clientId: 'client1',
+      })
+    })
+
+    it('logs a warning when refresh-mapping lookup fails', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      vi.mocked(storage.getAccessTokenForRefresh).mockResolvedValue(undefined)
+
+      await expect(
+        providerWithLog.exchangeRefreshToken(
+          { client_id: 'c', client_id_issued_at: 0, redirect_uris: [] },
+          'unknown-refresh',
+        ),
+      ).rejects.toThrow('Invalid refresh token')
+
+      const warning = records.find(
+        (r) => r.msg === 'exchangeRefreshToken: refresh mapping not found',
+      )
+      expect(warning).toBeDefined()
+      expect(warning?.payload).toMatchObject({
+        refreshTokenFingerprint: tokenFingerprint('unknown-refresh'),
+      })
+    })
+
+    it('logs a warning when installation for refresh is missing', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      vi.mocked(storage.getAccessTokenForRefresh).mockResolvedValue('orphan')
+      vi.mocked(storage.getInstallation).mockResolvedValue(undefined)
+
+      await expect(
+        providerWithLog.exchangeRefreshToken(
+          { client_id: 'c', client_id_issued_at: 0, redirect_uris: [] },
+          'refresh-tok',
+        ),
+      ).rejects.toThrow('Installation not found')
+
+      const warning = records.find(
+        (r) => r.msg === 'exchangeRefreshToken: installation not found',
+      )
+      expect(warning).toBeDefined()
+      expect(warning?.payload).toMatchObject({
+        refreshTokenFingerprint: tokenFingerprint('refresh-tok'),
+      })
+    })
+
+    it('logs a warning when verifyAccessToken cannot find the installation', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      vi.mocked(storage.getInstallation).mockResolvedValue(undefined)
+
+      await expect(
+        providerWithLog.verifyAccessToken('missing-tok'),
+      ).rejects.toThrow('Invalid or expired')
+
+      const warning = records.find(
+        (r) => r.msg === 'verifyAccessToken: installation not found',
+      )
+      expect(warning).toBeDefined()
+      expect(warning?.payload).toMatchObject({
+        tokenFingerprint: tokenFingerprint('missing-tok'),
+      })
+    })
+
+    it('logs a warning when verifyAccessToken finds an expired token', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'tok',
+        refreshToken: 'r',
+        clientId: 'c1',
+        userId: 'u1',
+        userEmail: 'u@example.com',
+        userDomain: 'example.com',
+        issuedAt: now - 7200,
+        expiresAt: now - 100,
+      })
+
+      await expect(providerWithLog.verifyAccessToken('tok')).rejects.toThrow(
+        'Invalid or expired',
+      )
+
+      const warning = records.find(
+        (r) => r.msg === 'verifyAccessToken: token expired',
+      )
+      expect(warning).toBeDefined()
+      expect(warning?.payload).toMatchObject({
+        tokenFingerprint: tokenFingerprint('tok'),
+      })
+    })
+
+    it('logs success for a valid verifyAccessToken', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'tok',
+        refreshToken: 'r',
+        clientId: 'c1',
+        userId: 'u1',
+        userEmail: 'u@example.com',
+        userDomain: 'example.com',
+        issuedAt: now,
+        expiresAt: now + 3600,
+      })
+
+      await providerWithLog.verifyAccessToken('tok')
+
+      const ok = records.find((r) => r.msg === 'verifyAccessToken: ok')
+      expect(ok).toBeDefined()
+    })
+
+    it('logs each step of exchangeAuthorizationCode', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      const now = Math.floor(Date.now() / 1000)
+      vi.mocked(storage.markTokenExchangeUsed).mockResolvedValue(true)
+      vi.mocked(storage.getTokenExchange).mockResolvedValue({
+        accessToken: 'access',
+        used: true,
+      })
+      vi.mocked(storage.getInstallation).mockResolvedValue({
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        clientId: 'c1',
+        userId: 'u1',
+        userEmail: 'u@example.com',
+        userDomain: 'example.com',
+        issuedAt: now,
+        expiresAt: now + 3600,
+      })
+
+      await providerWithLog.exchangeAuthorizationCode(
+        { client_id: 'c1', client_id_issued_at: 0, redirect_uris: [] },
+        'auth-code',
+      )
+
+      const messages = records.map((r) => r.msg)
+      expect(messages).toContain('exchangeAuthorizationCode: start')
+      expect(messages).toContain('exchangeAuthorizationCode: success')
+    })
+
+    it('logs a warning when exchangeAuthorizationCode encounters a replayed code', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      vi.mocked(storage.markTokenExchangeUsed).mockResolvedValue(false)
+
+      await expect(
+        providerWithLog.exchangeAuthorizationCode(
+          { client_id: 'c', client_id_issued_at: 0, redirect_uris: [] },
+          'reused',
+        ),
+      ).rejects.toThrow('already used')
+
+      const warn = records.find(
+        (r) => r.msg === 'exchangeAuthorizationCode: code replayed',
+      )
+      expect(warn).toBeDefined()
+    })
+
+    it('logs when revokeToken is called', async () => {
+      const { logger, records } = buildCapturingLogger()
+      const providerWithLog = new GoogleOAuthProvider({
+        ...providerConfig,
+        storage,
+        logger,
+      })
+      vi.mocked(storage.getAccessTokenForRefresh).mockResolvedValue('acc')
+      vi.mocked(storage.deleteInstallation).mockResolvedValue(undefined)
+      vi.mocked(storage.deleteRefreshMapping).mockResolvedValue(undefined)
+
+      await providerWithLog.revokeToken(
+        { client_id: 'c', client_id_issued_at: 0, redirect_uris: [] },
+        { token: 'r', token_type_hint: 'refresh_token' },
+      )
+
+      const log = records.find((r) => r.msg === 'revokeToken')
+      expect(log).toBeDefined()
+      expect(log?.payload).toMatchObject({ tokenTypeHint: 'refresh_token' })
+    })
+  })
+
   describe('exchangeRefreshToken', () => {
     it('generates new tokens and cleans up old ones', async () => {
       const now = Math.floor(Date.now() / 1000)
@@ -315,6 +621,7 @@ describe('GoogleOAuthProvider', () => {
       expect(tokens.access_token).not.toBe('old-access')
       expect(tokens.refresh_token).toBeTruthy()
       expect(tokens.refresh_token).not.toBe('old-refresh')
+      expect(tokens.expires_in).toBe(7 * 24 * 60 * 60)
       expect(storage.deleteInstallation).toHaveBeenCalledWith('old-access')
       expect(storage.deleteRefreshMapping).toHaveBeenCalledWith('old-refresh')
     })
