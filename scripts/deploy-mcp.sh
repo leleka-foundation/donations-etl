@@ -242,8 +242,8 @@ ORG_MISSION=ORG_MISSION:latest,\
 ORG_TAX_STATUS=ORG_TAX_STATUS:latest,\
 DEFAULT_SIGNER_NAME=DEFAULT_SIGNER_NAME:latest,\
 DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
-    --memory 2Gi \
-    --cpu 1 \
+    --memory 4Gi \
+    --cpu 2 \
     --min-instances 0 \
     --max-instances 3 \
     --timeout 600s \
