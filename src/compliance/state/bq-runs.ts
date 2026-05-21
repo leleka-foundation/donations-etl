@@ -80,7 +80,8 @@ export function createDiscoveryRunsAccessor(
           duration_ms,
           error_type,
           error_message,
-          payload
+          payload,
+          job_id
         )
         VALUES (
           @run_id,
@@ -92,7 +93,8 @@ export function createDiscoveryRunsAccessor(
           @duration_ms,
           @error_type,
           @error_message,
-          PARSE_JSON(@payload)
+          PARSE_JSON(@payload),
+          @job_id
         )
       `
       const params: Record<string, QueryParam> = {
@@ -106,6 +108,7 @@ export function createDiscoveryRunsAccessor(
         error_type: v.error_type,
         error_message: v.error_message,
         payload: v.payload === null ? null : JSON.stringify(v.payload),
+        job_id: v.job_id,
       }
 
       // BigQuery's nodejs SDK refuses null parameter values without an
@@ -116,6 +119,7 @@ export function createDiscoveryRunsAccessor(
         error_type: 'STRING',
         error_message: 'STRING',
         payload: 'STRING',
+        job_id: 'STRING',
       }
 
       return deps.runner

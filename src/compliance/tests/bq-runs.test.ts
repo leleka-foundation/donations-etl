@@ -68,7 +68,21 @@ describe('createDiscoveryRunsAccessor.recordRun', () => {
       error_type: 'STRING',
       error_message: 'STRING',
       payload: 'STRING',
+      job_id: 'STRING',
     })
+  })
+
+  it('includes job_id in the INSERT when the row carries one', async () => {
+    const query = vi.fn<BqQueryRunner['query']>(() => okAsync([]))
+    const accessor = createDiscoveryRunsAccessor({
+      runner: fakeRunner(query),
+      projectId: 'proj',
+    })
+    const jobId = '11111111-1111-4111-8111-111111111111'
+    await accessor.recordRun({ ...ROW, job_id: jobId })
+    const [sql, params] = query.mock.calls[0] ?? []
+    expect(sql).toMatch(/job_id/)
+    expect(params?.job_id).toBe(jobId)
   })
 
   it('passes SQL NULL for a null payload', async () => {
