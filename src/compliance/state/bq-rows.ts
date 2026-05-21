@@ -150,6 +150,23 @@ export const COMPLIANCE_TABLES: readonly ComplianceTableDefinition[] = [
       { name: 'error_type', type: 'STRING', mode: 'NULLABLE' },
       { name: 'error_message', type: 'STRING', mode: 'NULLABLE' },
       { name: 'payload', type: 'JSON', mode: 'NULLABLE' },
+      { name: 'job_id', type: 'STRING', mode: 'NULLABLE' },
+    ],
+  },
+  {
+    name: 'discovery_jobs',
+    description:
+      'One row per async compliance-discover job (parent of the per-source discovery_runs rows). Tracks lifecycle status, the filter the caller requested, and (on completion) the assembled DiscoveryReport.',
+    fields: [
+      { name: 'job_id', type: 'STRING', mode: 'REQUIRED' },
+      { name: 'started_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
+      { name: 'finished_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
+      { name: 'status', type: 'STRING', mode: 'REQUIRED' },
+      { name: 'requested_sources', type: 'JSON', mode: 'NULLABLE' },
+      { name: 'requested_jurisdiction', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'error_type', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'error_message', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'result', type: 'JSON', mode: 'NULLABLE' },
     ],
   },
   {
@@ -313,6 +330,10 @@ export const ComplianceDiscoveryRunRowSchema = z.object({
   error_type: z.string().nullable(),
   error_message: z.string().nullable(),
   payload: z.unknown().nullable(),
+  // Async-job parent linkage. Null for runs that were not part of an
+  // async compliance-discover job (legacy rows, or future synchronous
+  // callers). Set to the discovery_jobs.job_id otherwise.
+  job_id: z.string().uuid().nullable(),
 })
 
 export type ComplianceDiscoveryRunRow = z.infer<
@@ -355,3 +376,35 @@ export const ComplianceSourceRowSchema = z
   })
 
 export type ComplianceSourceRow = z.infer<typeof ComplianceSourceRowSchema>
+
+/**
+ * Row schema for the `discovery_jobs` table.
+ *
+ * A job represents one async invocation of compliance-discover. Children
+ * (`discovery_runs` rows) link back via `job_id`. The accessor enforces the
+ * `running → completed` and `running → failed` transitions; this schema
+ * just validates the wire format.
+ *
+ * `requested_sources` is an optional filter (subset of source ids). Null
+ * means "every source registered for the active jurisdictions".
+ * `requested_jurisdiction` is an optional single-jurisdiction filter.
+ */
+export const ComplianceDiscoveryJobRowSchema = z.object({
+  job_id: z.string().uuid(),
+  started_at: z.preprocess(extractTimestampValue, z.string().min(1)),
+  finished_at: z
+    .preprocess(extractTimestampValue, z.string().min(1))
+    .nullable(),
+  status: z.enum(['running', 'completed', 'failed']),
+  requested_sources: z.array(z.string().min(1)).readonly().nullable(),
+  requested_jurisdiction: z.string().min(1).nullable(),
+  error_type: z.string().nullable(),
+  error_message: z.string().nullable(),
+  // Serialised DiscoveryReport when the job is completed. Null while
+  // running and on failure.
+  result: z.unknown().nullable(),
+})
+
+export type ComplianceDiscoveryJobRow = z.infer<
+  typeof ComplianceDiscoveryJobRowSchema
+>

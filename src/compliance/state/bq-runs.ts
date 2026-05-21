@@ -49,6 +49,14 @@ export interface DiscoveryRunsAccessor {
     readonly ComplianceDiscoveryRunRow[],
     RunsAccessorError
   >
+  /**
+   * Read every run row that belongs to a single async discover job. Used by
+   * the async discover-status tool to report progress and to assemble the
+   * final result.
+   */
+  listRunsByJob(
+    jobId: string,
+  ): ResultAsync<readonly ComplianceDiscoveryRunRow[], RunsAccessorError>
 }
 
 /**
@@ -137,6 +145,24 @@ export function createDiscoveryRunsAccessor(
 
       return deps.runner
         .query(sql)
+        .mapErr<RunsAccessorError>((err) => ({
+          type: 'query',
+          message: err.message,
+        }))
+        .andThen((rows) => parseRunRows(rows))
+    },
+
+    listRunsByJob(jobId) {
+      const sql = `
+        SELECT *
+        FROM ${tableName}
+        WHERE job_id = @job_id
+        ORDER BY jurisdiction_id, source_id
+      `
+      const params: Record<string, QueryParam> = { job_id: jobId }
+
+      return deps.runner
+        .query(sql, params)
         .mapErr<RunsAccessorError>((err) => ({
           type: 'query',
           message: err.message,
