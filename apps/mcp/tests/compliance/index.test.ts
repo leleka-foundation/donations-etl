@@ -11,11 +11,18 @@ import { errAsync, okAsync } from 'neverthrow'
 import pino from 'pino'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import type {
+  OnboardingAnswers,
+  OnboardingSummary,
+} from '../../../../src/compliance/skills/onboard.ts'
 import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
 import type { Config } from '../../src/config'
 import {
+  createOnboardToolCallback,
+  createOnboardUpdateToolCallback,
   createStatusResourceCallback,
   createStatusToolCallback,
+  formatOnboardErrorText,
   interviewQuestionsResourceCallback,
   manualEvidenceTemplateCallback,
   registerComplianceSurface,
@@ -194,6 +201,172 @@ describe('manualEvidenceTemplateCallback', () => {
     expect(parseFirstResourceJson(out)).toMatchObject({
       sourceId: 'irs-eo-bmf',
     })
+  })
+})
+
+describe('createOnboardToolCallback', () => {
+  const ANSWERS: OnboardingAnswers = {
+    legalName: 'Foo',
+    ein: '12-3456789',
+    stateOfIncorporation: 'CA',
+    caSosEntityNumber: 'C0123456',
+    caAgCharityNumber: 'CT0123456',
+    fiscalYearEndMonth: 12,
+    fiscalYearEndDay: 31,
+    formationDate: '2010-01-15',
+    mailingAddressLine1: '1 Mission St',
+    mailingAddressLine2: null,
+    mailingAddressCity: 'San Francisco',
+    mailingAddressRegion: 'CA',
+    mailingAddressPostalCode: '94105',
+    mailingAddressCountry: 'US',
+  }
+  const SUMMARY: OnboardingSummary = {
+    legalName: 'Foo',
+    identifiers: {
+      'us-federal': { ein: '12-3456789' },
+      'us-ca': {
+        sosEntityNumber: 'C0123456',
+        agCharityNumber: 'CT0123456',
+      },
+    },
+    entityRow: {
+      legal_name: 'Foo',
+      state_of_incorporation: 'CA',
+      fiscal_year_end_month: 12,
+      fiscal_year_end_day: 31,
+      formation_date: '2010-01-15',
+      mailing_address_line1: '1 Mission St',
+      mailing_address_line2: null,
+      mailing_address_city: 'San Francisco',
+      mailing_address_region: 'CA',
+      mailing_address_postal_code: '94105',
+      mailing_address_country: 'US',
+    },
+    migration: {
+      createdDataset: false,
+      createdTables: [],
+      skippedTables: [],
+      addedColumns: [],
+      updatedViews: [],
+    },
+  }
+
+  it('returns the success body when confirmed', async () => {
+    const cb = createOnboardToolCallback({
+      config: testConfig,
+      logger,
+      runOnboard: () => okAsync(SUMMARY),
+    })
+    const result = await cb({ confirm: true, answers: ANSWERS })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({
+      ok: true,
+      legalName: 'Foo',
+    })
+  })
+
+  it('returns an error body when not confirmed', async () => {
+    const cb = createOnboardToolCallback({
+      config: testConfig,
+      logger,
+      runOnboard: () => okAsync(SUMMARY),
+    })
+    const result = await cb({ confirm: false, answers: ANSWERS })
+    expect(result.isError).toBe(true)
+    const first = result.content[0]
+    if (first?.type === 'text') {
+      expect(first.text).toContain('unconfirmed')
+    }
+  })
+})
+
+describe('createOnboardUpdateToolCallback', () => {
+  const SUMMARY: OnboardingSummary = {
+    legalName: 'Foo',
+    identifiers: {
+      'us-federal': { ein: '12-3456789' },
+      'us-ca': { sosEntityNumber: 'C0123456' },
+    },
+    entityRow: {
+      legal_name: 'Foo',
+      state_of_incorporation: 'CA',
+      fiscal_year_end_month: 12,
+      fiscal_year_end_day: 31,
+      formation_date: '2010-01-15',
+      mailing_address_line1: '1 Mission St',
+      mailing_address_line2: null,
+      mailing_address_city: 'San Francisco',
+      mailing_address_region: 'CA',
+      mailing_address_postal_code: '94105',
+      mailing_address_country: 'US',
+    },
+    migration: {
+      createdDataset: false,
+      createdTables: [],
+      skippedTables: [],
+      addedColumns: [],
+      updatedViews: [],
+    },
+  }
+
+  it('returns the success body when confirmed', async () => {
+    const cb = createOnboardUpdateToolCallback({
+      config: testConfig,
+      logger,
+      runOnboardUpdate: () => okAsync(SUMMARY),
+    })
+    const result = await cb({
+      confirm: true,
+      partial: { caAgCharityNumber: 'CT0123456' },
+    })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({
+      ok: true,
+      legalName: 'Foo',
+    })
+  })
+
+  it('returns an error body when not confirmed', async () => {
+    const cb = createOnboardUpdateToolCallback({
+      config: testConfig,
+      logger,
+      runOnboardUpdate: () => okAsync(SUMMARY),
+    })
+    const result = await cb({
+      confirm: false,
+      partial: { caAgCharityNumber: 'CT0123456' },
+    })
+    expect(result.isError).toBe(true)
+  })
+
+  it('formats not_onboarded errors with the type prefix', async () => {
+    const cb = createOnboardUpdateToolCallback({
+      config: testConfig,
+      logger,
+      runOnboardUpdate: () =>
+        errAsync({
+          type: 'not_onboarded' as const,
+          message: 'onboard first',
+        }),
+    })
+    const result = await cb({
+      confirm: true,
+      partial: { caAgCharityNumber: 'CT0123456' },
+    })
+    expect(result.isError).toBe(true)
+    const first = result.content[0]
+    if (first?.type === 'text') {
+      expect(first.text).toContain('not_onboarded')
+    }
+  })
+})
+
+describe('formatOnboardErrorText', () => {
+  it('renders the type and message in a stable shape', () => {
+    expect(formatOnboardErrorText({ type: 'unconfirmed', message: 'no' })).toBe(
+      'Error (unconfirmed): no',
+    )
   })
 })
 

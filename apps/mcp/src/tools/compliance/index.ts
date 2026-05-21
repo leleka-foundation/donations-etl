@@ -27,7 +27,18 @@ import type {
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from 'pino'
+import type { z } from 'zod'
 import type { Config } from '../../config'
+import {
+  ConfirmSchema,
+  OnboardingAnswersInputSchema,
+  PartialOnboardingAnswersInputSchema,
+  handleComplianceOnboard,
+  handleComplianceOnboardUpdate,
+  type OnboardError,
+  type OnboardRunner,
+  type OnboardUpdateRunner,
+} from './onboard'
 import {
   COMPLIANCE_INTERVIEW_QUESTIONS_URI,
   COMPLIANCE_MANUAL_EVIDENCE_URI_TEMPLATE,
@@ -50,6 +61,17 @@ export interface RegisterComplianceSurfaceDeps {
   readonly config: Config
   readonly logger: Logger
   readonly readStatus?: ComplianceStatusReader
+  readonly runOnboard?: OnboardRunner
+  readonly runOnboardUpdate?: OnboardUpdateRunner
+}
+
+/**
+ * Format an `OnboardError` for inclusion in a tool's text response.
+ * Exported so the test suite asserts on the same formatting the model
+ * sees.
+ */
+export function formatOnboardErrorText(error: OnboardError): string {
+  return `Error (${error.type}): ${error.message}`
 }
 
 /**
@@ -176,6 +198,94 @@ export function manualEvidenceTemplateCallback(
 }
 
 /**
+ * Build the tool callback for `compliance-onboard`. Exported so the
+ * confirm-gate / error-formatting branches can be tested directly.
+ */
+export function createOnboardToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: {
+  confirm: boolean
+  answers: z.infer<typeof OnboardingAnswersInputSchema>
+}) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceOnboard(
+      { confirm: input.confirm, answers: input.answers },
+      {
+        config: deps.config,
+        logger: deps.logger,
+        runOnboard: deps.runOnboard,
+      },
+    )
+    if (result.isErr()) {
+      return {
+        content: [{ type: 'text', text: formatOnboardErrorText(result.error) }],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok: true,
+              legalName: result.value.legalName,
+              identifiers: result.value.identifiers,
+              migration: result.value.migration,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    }
+  }
+}
+
+/**
+ * Build the tool callback for `compliance-onboard-update`.
+ */
+export function createOnboardUpdateToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: {
+  confirm: boolean
+  partial: z.infer<typeof PartialOnboardingAnswersInputSchema>
+}) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceOnboardUpdate(
+      { confirm: input.confirm, partial: input.partial },
+      {
+        config: deps.config,
+        logger: deps.logger,
+        runOnboardUpdate: deps.runOnboardUpdate,
+      },
+    )
+    if (result.isErr()) {
+      return {
+        content: [{ type: 'text', text: formatOnboardErrorText(result.error) }],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok: true,
+              legalName: result.value.legalName,
+              identifiers: result.value.identifiers,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    }
+  }
+}
+
+/**
  * Resource callback for `compliance://sources/registry`. Exported so
  * the registration code path is covered by direct unit tests.
  */
@@ -209,6 +319,34 @@ export function registerComplianceSurface(
       inputSchema: {},
     },
     statusToolCallback,
+  )
+
+  mcp.registerTool(
+    'compliance-onboard',
+    {
+      title: 'Compliance Onboard (full submit)',
+      description:
+        'First-time onboarding: persists the nonprofit identity to BigQuery and Secret Manager. Requires confirm: true. Use the compliance://onboarding/interview-questions resource to drive the conversational collection of the answers parameter.',
+      inputSchema: {
+        confirm: ConfirmSchema,
+        answers: OnboardingAnswersInputSchema,
+      },
+    },
+    createOnboardToolCallback(deps),
+  )
+
+  mcp.registerTool(
+    'compliance-onboard-update',
+    {
+      title: 'Compliance Onboard Update (partial)',
+      description:
+        'Update one or more onboarding fields (e.g. a newly issued AG charity number) without resubmitting the whole bundle. Requires confirm: true. Rejects if no prior onboarding exists.',
+      inputSchema: {
+        confirm: ConfirmSchema,
+        partial: PartialOnboardingAnswersInputSchema,
+      },
+    },
+    createOnboardUpdateToolCallback(deps),
   )
 
   mcp.registerResource(
