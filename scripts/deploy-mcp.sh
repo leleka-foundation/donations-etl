@@ -162,12 +162,16 @@ else
   # Grant SA access to secrets
   if [[ "$DRY_RUN" != "true" ]]; then
     log "Granting ${RUNTIME_SA} access to secrets..."
-    for SECRET_NAME in MCP_GOOGLE_CLIENT_SECRET ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE; do
+    # MCP-owned secrets, plus compliance-entity-ids (which is created
+    # on-demand by the compliance-onboard skill, not by this script —
+    # but the MCP server still needs read access at runtime so the
+    # compliance-status tool can return identifiers).
+    for SECRET_NAME in MCP_GOOGLE_CLIENT_SECRET ORG_NAME ORG_ADDRESS ORG_MISSION ORG_TAX_STATUS DEFAULT_SIGNER_NAME DEFAULT_SIGNER_TITLE compliance-entity-ids; do
       gcloud secrets add-iam-policy-binding "${SECRET_NAME}" \
         --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
         --role="roles/secretmanager.secretAccessor" \
         --project="${PROJECT_ID}" \
-        --quiet >/dev/null 2>&1
+        --quiet >/dev/null 2>&1 || warn "  Skipping grant on ${SECRET_NAME} (secret may not exist yet)"
     done
     log "  Access granted"
   fi
