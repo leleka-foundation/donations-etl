@@ -242,11 +242,11 @@ ORG_MISSION=ORG_MISSION:latest,\
 ORG_TAX_STATUS=ORG_TAX_STATUS:latest,\
 DEFAULT_SIGNER_NAME=DEFAULT_SIGNER_NAME:latest,\
 DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
-    --memory 1Gi \
+    --memory 2Gi \
     --cpu 1 \
     --min-instances 0 \
     --max-instances 3 \
-    --timeout 120s \
+    --timeout 600s \
     --port 8080 \
     --allow-unauthenticated \
     --quiet
