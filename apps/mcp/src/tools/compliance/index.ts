@@ -51,6 +51,7 @@ import {
   type OnboardRunner,
   type OnboardUpdateRunner,
 } from './onboard'
+import { buildComplianceOverviewPrompt } from './prompt'
 import {
   RecordEvidenceInputSchema,
   handleComplianceRecordEvidence,
@@ -474,6 +475,31 @@ export function createDiscoverResultToolCallback(
 }
 
 /**
+ * Build the prompt callback for `compliance-overview`. Exported so
+ * the registration code path is covered by direct unit tests.
+ */
+export function createComplianceOverviewPromptCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): () => {
+  messages: {
+    role: 'user'
+    content: { type: 'text'; text: string }
+  }[]
+} {
+  return () => ({
+    messages: [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: buildComplianceOverviewPrompt(deps.config),
+        },
+      },
+    ],
+  })
+}
+
+/**
  * Resource callback for `compliance://sources/registry`. Exported so
  * the registration code path is covered by direct unit tests.
  */
@@ -634,6 +660,16 @@ export function registerComplianceSurface(
       mimeType: 'application/json',
     },
     interviewQuestionsResourceCallback,
+  )
+
+  mcp.registerPrompt(
+    'compliance-overview',
+    {
+      title: 'Compliance Toolkit Overview',
+      description:
+        'Short prose describing the compliance tools, resources, and the recommended order of operations. Use this prompt to ground the host LLM before answering compliance questions.',
+    },
+    createComplianceOverviewPromptCallback(deps),
   )
 
   mcp.registerResource(

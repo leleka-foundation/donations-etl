@@ -23,6 +23,7 @@ import type { RecordComplianceEvidenceReport } from '../../../../src/compliance/
 import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
 import type { Config } from '../../src/config'
 import {
+  createComplianceOverviewPromptCallback,
   createDiscoverResultToolCallback,
   createDiscoverStartToolCallback,
   createDiscoverStatusToolCallback,
@@ -559,6 +560,21 @@ describe('createDiscoverResultToolCallback', () => {
     })
     const result = await cb({ jobId: 'job-1' })
     expect(result.isError).toBe(true)
+  })
+})
+
+describe('createComplianceOverviewPromptCallback', () => {
+  it('returns a single user-role text message', () => {
+    const cb = createComplianceOverviewPromptCallback({
+      config: testConfig,
+      logger,
+    })
+    const result = cb()
+    expect(result.messages).toHaveLength(1)
+    const m = result.messages[0]
+    expect(m?.role).toBe('user')
+    expect(m?.content.type).toBe('text')
+    expect(m?.content.text).toContain('Test Org')
   })
 })
 
