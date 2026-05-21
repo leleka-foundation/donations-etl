@@ -2,7 +2,7 @@
 
 Branch: `feat/compliance-mcp-and-plugin`
 
-Expose the compliance toolkit (`src/compliance/`) through the deployed remote MCP server (`apps/mcp/`) so claude.ai users and autonomous agents can call it with the same parity as the local skills. Additionally, package the project as a Claude Code marketplace with two plugins (`donations-etl-core` and `donations-etl-compliance`) so Claude Code users install everything in one shot.
+Expose the compliance toolkit (`src/compliance/`) through the deployed remote MCP server (`apps/mcp/`) so claude.ai users and autonomous agents can call it with the same parity as the local skills. Additionally, package the project as a Claude Code marketplace with two plugins (`nonprofit-toolkit-core` and `nonprofit-toolkit-compliance`) so Claude Code users install everything in one shot.
 
 Companion checklist: [`CHECKLIST.md`](./CHECKLIST.md).
 
@@ -20,7 +20,7 @@ Acceptance gates from `.claude/rules/*` apply: TDD, 100% coverage on new code, `
 | Onboard surface        | Question-list resource + full-submit tool + partial-update tool | Matches existing `OnboardingAnswers` / `InterviewQuestion[]` split in `onboard.ts`.                                                         |
 | User-assisted evidence | Instructions resource + submit tool                             | Resource generated from `SourceManualEvidenceField[]`.                                                                                      |
 | Read-only resources    | Aggregated status + source registry                             | No separate findings/runs resources — status covers them.                                                                                   |
-| Plugin scope           | Marketplace at repo root with two plugins                       | `donations-etl-core` + `donations-etl-compliance`. Both reference the same remote MCP server.                                               |
+| Plugin scope           | Marketplace at repo root with two plugins                       | `nonprofit-toolkit-core` + `nonprofit-toolkit-compliance`. Both reference the same remote MCP server.                                       |
 | Local skills           | Unchanged                                                       | Skills keep calling backends directly via wiring files. MCP is additive.                                                                    |
 | Auth                   | Existing OAuth + `confirm: true` parameter on writes            | No new role/scope system.                                                                                                                   |
 
@@ -114,19 +114,19 @@ Both changes go through `ensureComplianceSchema` (idempotent migration), tested 
   marketplace.json
 ```
 
-Marketplace `name`: `donations-etl`. Owner: `vgeshel/donations-etl`. Two plugins listed.
+Marketplace `name`: `nonprofit-toolkit`. Owner: `vgeshel/nonprofit-toolkit`. Two plugins listed.
 
 ### Plugin layout
 
 ```
 plugins/
-  donations-etl-core/
+  nonprofit-toolkit-core/
     .claude-plugin/
       plugin.json
     .mcp.json
     skills/...           # core skills (donor-letter, donations-query, bootstrap, etc.)
     README.md
-  donations-etl-compliance/
+  nonprofit-toolkit-compliance/
     .claude-plugin/
       plugin.json
     .mcp.json
@@ -151,7 +151,7 @@ Both plugins ship the same content:
 ```json
 {
   "mcpServers": {
-    "donations-etl": {
+    "nonprofit-toolkit": {
       "type": "http",
       "url": "https://your-mcp-server.example.com/mcp"
     }
@@ -170,7 +170,7 @@ Both plugins specify `name`, `version` (start at `0.1.0`), `displayName`, `descr
 Two plugins each declaring the same MCP server: does Claude Code dedupe by URL, or start two sessions? Verify with a real `/plugin install` of both into a clean Claude Code env. Fallbacks:
 
 1. If dedupe works: ship as-is.
-2. If both spin up: move `.mcp.json` to only `donations-etl-core`; document core as a prerequisite for compliance; the compliance plugin becomes skills-only.
+2. If both spin up: move `.mcp.json` to only `nonprofit-toolkit-core`; document core as a prerequisite for compliance; the compliance plugin becomes skills-only.
 
 ---
 
@@ -213,12 +213,12 @@ src/compliance/tests/
 .claude-plugin/
   marketplace.json
 plugins/
-  donations-etl-core/
+  nonprofit-toolkit-core/
     .claude-plugin/plugin.json
     .mcp.json
     skills/...                   # symlinks
     README.md
-  donations-etl-compliance/
+  nonprofit-toolkit-compliance/
     .claude-plugin/plugin.json
     .mcp.json
     skills/...                   # symlinks

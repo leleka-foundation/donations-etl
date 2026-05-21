@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "donations-etl": {
+    "nonprofit-toolkit": {
       "type": "http",
       "url": "https://your-mcp-server.example.com/mcp"
     }

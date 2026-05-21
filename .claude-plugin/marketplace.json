@@ -1,22 +1,22 @@
 {
-  "name": "donations-etl",
+  "name": "nonprofit-toolkit",
   "owner": {
     "name": "vgeshel",
-    "url": "https://github.com/vgeshel/donations-etl"
+    "url": "https://github.com/vgeshel/nonprofit-toolkit"
   },
   "metadata": {
-    "description": "Donations ETL toolkit for US nonprofits — payment-platform sync, donor letters, BigQuery analytics, and federal/California compliance discovery.",
+    "description": "Nonprofit toolkit for US nonprofits — payment-platform sync, donor letters, BigQuery analytics, and federal/California compliance discovery.",
     "version": "0.1.0"
   },
   "plugins": [
     {
-      "name": "donations-etl-core",
-      "source": "./plugins/donations-etl-core",
-      "description": "Core donations ETL skills: payment-platform sync, donor letters, BigQuery analytics, deploys, and bootstrap."
+      "name": "nonprofit-toolkit-core",
+      "source": "./plugins/nonprofit-toolkit-core",
+      "description": "Core nonprofit ETL skills: payment-platform sync, donor letters, BigQuery analytics, deploys, and bootstrap."
     },
     {
-      "name": "donations-etl-compliance",
-      "source": "./plugins/donations-etl-compliance",
+      "name": "nonprofit-toolkit-compliance",
+      "source": "./plugins/nonprofit-toolkit-compliance",
       "description": "Compliance toolkit skills: onboarding, status, and IRS / California discovery."
     }
   ]

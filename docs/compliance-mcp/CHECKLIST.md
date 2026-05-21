@@ -88,18 +88,18 @@ Branch: `feat/compliance-mcp-and-plugin`
 
 - [x] Verify whether Claude Code's `.mcp.json` parser supports env var substitution — search docs, document the answer in PLAN.md "Open question" section. Decide whether to use `${DONATIONS_MCP_URL}` or a placeholder URL.
 - [x] Verify whether two plugins each declaring the same MCP server URL leads to dedup or duplicate sessions in Claude Code — empirical test. Decide whether to keep `.mcp.json` in both or only in core.
-- [x] `.claude-plugin/marketplace.json` — name `donations-etl`, owner `vgeshel/donations-etl`, plugins `donations-etl-core` and `donations-etl-compliance`.
-- [x] `plugins/donations-etl-core/.claude-plugin/plugin.json` (name, version `0.1.0`, displayName, description, repository, license, keywords).
-- [x] `plugins/donations-etl-core/.mcp.json` (per decision above).
-- [x] `plugins/donations-etl-core/skills/` symlinks for core skills listed in PLAN.md.
-- [x] `plugins/donations-etl-core/README.md`.
-- [x] `plugins/donations-etl-compliance/.claude-plugin/plugin.json`.
-- [x] `plugins/donations-etl-compliance/.mcp.json` (per decision above).
-- [x] `plugins/donations-etl-compliance/skills/` symlinks for compliance skills.
-- [x] `plugins/donations-etl-compliance/README.md`.
+- [x] `.claude-plugin/marketplace.json` — name `nonprofit-toolkit`, owner `vgeshel/nonprofit-toolkit`, plugins `nonprofit-toolkit-core` and `nonprofit-toolkit-compliance`.
+- [x] `plugins/nonprofit-toolkit-core/.claude-plugin/plugin.json` (name, version `0.1.0`, displayName, description, repository, license, keywords).
+- [x] `plugins/nonprofit-toolkit-core/.mcp.json` (per decision above).
+- [x] `plugins/nonprofit-toolkit-core/skills/` symlinks for core skills listed in PLAN.md.
+- [x] `plugins/nonprofit-toolkit-core/README.md`.
+- [x] `plugins/nonprofit-toolkit-compliance/.claude-plugin/plugin.json`.
+- [x] `plugins/nonprofit-toolkit-compliance/.mcp.json` (per decision above).
+- [x] `plugins/nonprofit-toolkit-compliance/skills/` symlinks for compliance skills.
+- [x] `plugins/nonprofit-toolkit-compliance/README.md`.
 - [x] Manifest-validation tests in `tests/plugins/manifest.test.ts` — load each `plugin.json` + `marketplace.json`, validate against the published JSON Schema.
 
-- [x] Commit `feat(plugins): add donations-etl marketplace with core + compliance plugins`.
+- [x] Commit `feat(plugins): add nonprofit-toolkit marketplace with core + compliance plugins`.
 
 ## Step 9 — Wire-up in `main.ts`
 

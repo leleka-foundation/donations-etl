@@ -74,7 +74,7 @@ async function main(): Promise<void> {
    */
   function createMcpServerInstance(): McpServer {
     const mcp = new McpServer(
-      { name: 'donations-etl', version: '1.0.0' },
+      { name: 'nonprofit-toolkit', version: '1.0.0' },
       {
         capabilities: { tools: {}, prompts: {}, resources: {} },
       },

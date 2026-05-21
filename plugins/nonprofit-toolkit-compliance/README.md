@@ -1,11 +1,11 @@
-# donations-etl-compliance
+# nonprofit-toolkit-compliance
 
-Compliance toolkit skills for the [donations-etl](https://github.com/vgeshel/donations-etl) project. Install via the donations-etl marketplace.
+Compliance toolkit skills for the [nonprofit-toolkit](https://github.com/vgeshel/nonprofit-toolkit) project. Install via the nonprofit-toolkit marketplace.
 
 ## What this plugin contains
 
 - **Skills:** `compliance-onboard`, `compliance-status`, `compliance-discover`.
-- **MCP server registration:** declares the remote `donations-etl` MCP server in `.mcp.json` (HTTP transport), which exposes the compliance tools and resources used by these skills.
+- **MCP server registration:** declares the remote `nonprofit-toolkit` MCP server in `.mcp.json` (HTTP transport), which exposes the compliance tools and resources used by these skills.
 
 The deployed MCP server provides:
 
@@ -17,9 +17,9 @@ See [`docs/compliance-mcp/PLAN.md`](../../docs/compliance-mcp/PLAN.md) for the f
 
 ## Configuring the MCP server URL
 
-`.mcp.json` ships with a placeholder URL (`https://your-mcp-server.example.com/mcp`). Edit it to point at your deployed Cloud Run instance after the donations-etl MCP server is provisioned.
+`.mcp.json` ships with a placeholder URL (`https://your-mcp-server.example.com/mcp`). Edit it to point at your deployed Cloud Run instance after the nonprofit-toolkit MCP server is provisioned.
 
 ## See also
 
 - Marketplace: [`.claude-plugin/marketplace.json`](../../.claude-plugin/marketplace.json)
-- Companion plugin (core ETL skills): [`donations-etl-core`](../donations-etl-core/README.md)
+- Companion plugin (core ETL skills): [`nonprofit-toolkit-core`](../nonprofit-toolkit-core/README.md)

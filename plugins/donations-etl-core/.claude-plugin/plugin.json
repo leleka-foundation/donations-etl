@@ -1,9 +1,0 @@
-{
-  "name": "donations-etl-core",
-  "displayName": "Donations ETL (core)",
-  "version": "0.1.0",
-  "description": "Skills for the donations ETL toolkit: payment-platform sync, donor letters, BigQuery analytics, deploys, and bootstrap. Registers the donations-etl remote MCP server via .mcp.json.",
-  "license": "MIT",
-  "repository": "https://github.com/vgeshel/donations-etl",
-  "keywords": ["nonprofit", "donations", "etl", "bigquery", "mcp"]
-}

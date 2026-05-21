@@ -63,7 +63,7 @@ describe('marketplace.json', () => {
     )
     const parsed: unknown = JSON.parse(raw)
     const marketplace = MarketplaceSchema.parse(parsed)
-    expect(marketplace.name).toBe('donations-etl')
+    expect(marketplace.name).toBe('nonprofit-toolkit')
     expect(marketplace.plugins.length).toBeGreaterThan(0)
   })
 
@@ -87,7 +87,7 @@ const EXPECTED_PLUGINS: readonly {
   readonly expectedSkills: readonly string[]
 }[] = [
   {
-    slug: 'donations-etl-core',
+    slug: 'nonprofit-toolkit-core',
     expectedSkills: [
       'agentic-analytics',
       'bootstrap',
@@ -102,7 +102,7 @@ const EXPECTED_PLUGINS: readonly {
     ],
   },
   {
-    slug: 'donations-etl-compliance',
+    slug: 'nonprofit-toolkit-compliance',
     expectedSkills: [
       'compliance-discover',
       'compliance-onboard',
@@ -128,8 +128,8 @@ describe.each(EXPECTED_PLUGINS)('plugin: $slug', ({ slug, expectedSkills }) => {
     const raw = await readFile(join(pluginRoot, '.mcp.json'), 'utf-8')
     const parsed: unknown = JSON.parse(raw)
     const config = McpJsonSchema.parse(parsed)
-    expect(Object.keys(config.mcpServers)).toContain('donations-etl')
-    const server = config.mcpServers['donations-etl']
+    expect(Object.keys(config.mcpServers)).toContain('nonprofit-toolkit')
+    const server = config.mcpServers['nonprofit-toolkit']
     expect(server?.type).toBe('http')
     expect(server?.url).toMatch(/^https?:\/\//)
   })
