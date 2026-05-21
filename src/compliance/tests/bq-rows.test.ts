@@ -345,6 +345,38 @@ describe('ComplianceDiscoveryJobRowSchema', () => {
     })
     expect(parsed.result).toEqual({ runs: [], findings: [] })
   })
+
+  it('parses requested_sources when BigQuery returns it as a JSON-encoded string', () => {
+    // BQ returns JSON columns as JSON-encoded strings, not as parsed
+    // arrays. The schema's preprocess handles that transparently.
+    const parsed = ComplianceDiscoveryJobRowSchema.parse({
+      ...valid,
+      requested_sources: '["ca-sos-bizfile","ca-ftb-entity-status-letter"]',
+    })
+    expect(parsed.requested_sources).toEqual([
+      'ca-sos-bizfile',
+      'ca-ftb-entity-status-letter',
+    ])
+  })
+
+  it('parses result when BigQuery returns it as a JSON-encoded string', () => {
+    const parsed = ComplianceDiscoveryJobRowSchema.parse({
+      ...valid,
+      status: 'completed',
+      finished_at: '2024-01-01T00:00:30Z',
+      result: '{"runs":[],"findings":[]}',
+    })
+    expect(parsed.result).toEqual({ runs: [], findings: [] })
+  })
+
+  it('keeps an unparseable JSON string as-is so the downstream check fails loudly', () => {
+    expect(() =>
+      ComplianceDiscoveryJobRowSchema.parse({
+        ...valid,
+        requested_sources: 'this is not valid JSON',
+      }),
+    ).toThrow()
+  })
 })
 
 describe('ComplianceFindingRowSchema', () => {

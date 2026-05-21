@@ -389,6 +389,24 @@ export type ComplianceSourceRow = z.infer<typeof ComplianceSourceRowSchema>
  * means "every source registered for the active jurisdictions".
  * `requested_jurisdiction` is an optional single-jurisdiction filter.
  */
+/**
+ * BigQuery returns JSON columns as JSON-encoded strings, not parsed
+ * objects. Preprocess: if we see a string, parse it; otherwise pass
+ * through. Strings that fail to parse are returned as-is so the
+ * downstream Zod check produces a clear "expected array, received
+ * string" error rather than a silent corruption.
+ */
+const parseJsonColumn = (val: unknown): unknown => {
+  if (typeof val !== 'string') {
+    return val
+  }
+  try {
+    return JSON.parse(val)
+  } catch {
+    return val
+  }
+}
+
 export const ComplianceDiscoveryJobRowSchema = z.object({
   job_id: z.string().uuid(),
   started_at: z.preprocess(extractTimestampValue, z.string().min(1)),
@@ -396,13 +414,17 @@ export const ComplianceDiscoveryJobRowSchema = z.object({
     .preprocess(extractTimestampValue, z.string().min(1))
     .nullable(),
   status: z.enum(['running', 'completed', 'failed']),
-  requested_sources: z.array(z.string().min(1)).readonly().nullable(),
+  requested_sources: z.preprocess(
+    parseJsonColumn,
+    z.array(z.string().min(1)).readonly().nullable(),
+  ),
   requested_jurisdiction: z.string().min(1).nullable(),
   error_type: z.string().nullable(),
   error_message: z.string().nullable(),
   // Serialised DiscoveryReport when the job is completed. Null while
-  // running and on failure.
-  result: z.unknown().nullable(),
+  // running and on failure. Stored as a BQ JSON column; BQ returns it
+  // as a JSON-encoded string so we parse it here.
+  result: z.preprocess(parseJsonColumn, z.unknown().nullable()),
 })
 
 export type ComplianceDiscoveryJobRow = z.infer<
