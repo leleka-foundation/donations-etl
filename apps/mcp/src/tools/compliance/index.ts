@@ -40,6 +40,12 @@ import {
   type OnboardUpdateRunner,
 } from './onboard'
 import {
+  RecordEvidenceInputSchema,
+  handleComplianceRecordEvidence,
+  type RecordEvidenceError,
+  type RecordEvidenceRunner,
+} from './record-evidence'
+import {
   COMPLIANCE_INTERVIEW_QUESTIONS_URI,
   COMPLIANCE_MANUAL_EVIDENCE_URI_TEMPLATE,
   COMPLIANCE_SOURCES_REGISTRY_URI,
@@ -63,6 +69,7 @@ export interface RegisterComplianceSurfaceDeps {
   readonly readStatus?: ComplianceStatusReader
   readonly runOnboard?: OnboardRunner
   readonly runOnboardUpdate?: OnboardUpdateRunner
+  readonly runRecordEvidence?: RecordEvidenceRunner
 }
 
 /**
@@ -71,6 +78,15 @@ export interface RegisterComplianceSurfaceDeps {
  * sees.
  */
 export function formatOnboardErrorText(error: OnboardError): string {
+  return `Error (${error.type}): ${error.message}`
+}
+
+/**
+ * Format a `RecordEvidenceError` similarly.
+ */
+export function formatRecordEvidenceErrorText(
+  error: RecordEvidenceError,
+): string {
   return `Error (${error.type}): ${error.message}`
 }
 
@@ -286,6 +302,53 @@ export function createOnboardUpdateToolCallback(
 }
 
 /**
+ * Build the tool callback for `compliance-record-evidence`.
+ */
+export function createRecordEvidenceToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: {
+  confirm: boolean
+  sourceId: string
+  observedAt?: string
+  evidence: Record<string, unknown>
+}) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceRecordEvidence(input, {
+      config: deps.config,
+      logger: deps.logger,
+      runRecordEvidence: deps.runRecordEvidence,
+    })
+    if (result.isErr()) {
+      return {
+        content: [
+          { type: 'text', text: formatRecordEvidenceErrorText(result.error) },
+        ],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok: true,
+              sourceId: result.value.sourceId,
+              jurisdictionId: result.value.jurisdictionId,
+              runId: result.value.runId,
+              recordedAt: result.value.recordedAt,
+              findings: result.value.findings,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    }
+  }
+}
+
+/**
  * Resource callback for `compliance://sources/registry`. Exported so
  * the registration code path is covered by direct unit tests.
  */
@@ -347,6 +410,22 @@ export function registerComplianceSurface(
       },
     },
     createOnboardUpdateToolCallback(deps),
+  )
+
+  mcp.registerTool(
+    'compliance-record-evidence',
+    {
+      title: 'Compliance Record Evidence',
+      description:
+        'Persist user-provided evidence for a manual or user-assisted-authenticated source. Pull compliance://sources/{sourceId}/manual-evidence-instructions first to learn the expected evidence keys. Requires confirm: true.',
+      inputSchema: {
+        confirm: ConfirmSchema,
+        sourceId: RecordEvidenceInputSchema.shape.sourceId,
+        observedAt: RecordEvidenceInputSchema.shape.observedAt,
+        evidence: RecordEvidenceInputSchema.shape.evidence,
+      },
+    },
+    createRecordEvidenceToolCallback(deps),
   )
 
   mcp.registerResource(

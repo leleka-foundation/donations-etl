@@ -15,14 +15,17 @@ import type {
   OnboardingAnswers,
   OnboardingSummary,
 } from '../../../../src/compliance/skills/onboard.ts'
+import type { RecordComplianceEvidenceReport } from '../../../../src/compliance/skills/record-evidence.ts'
 import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
 import type { Config } from '../../src/config'
 import {
   createOnboardToolCallback,
   createOnboardUpdateToolCallback,
+  createRecordEvidenceToolCallback,
   createStatusResourceCallback,
   createStatusToolCallback,
   formatOnboardErrorText,
+  formatRecordEvidenceErrorText,
   interviewQuestionsResourceCallback,
   manualEvidenceTemplateCallback,
   registerComplianceSurface,
@@ -367,6 +370,85 @@ describe('formatOnboardErrorText', () => {
     expect(formatOnboardErrorText({ type: 'unconfirmed', message: 'no' })).toBe(
       'Error (unconfirmed): no',
     )
+  })
+})
+
+describe('formatRecordEvidenceErrorText', () => {
+  it('renders the type and message in a stable shape', () => {
+    expect(
+      formatRecordEvidenceErrorText({
+        type: 'unconfirmed',
+        message: 'no',
+      }),
+    ).toBe('Error (unconfirmed): no')
+  })
+})
+
+describe('createRecordEvidenceToolCallback', () => {
+  const REPORT: RecordComplianceEvidenceReport = {
+    sourceId: 'ca-cdtfa-online-services',
+    jurisdictionId: 'us-ca',
+    runId: '22222222-2222-4222-8222-222222222222',
+    recordedAt: '2024-05-01T00:00:00Z',
+    findings: [],
+  }
+
+  it('returns the success body when confirmed', async () => {
+    const cb = createRecordEvidenceToolCallback({
+      config: testConfig,
+      logger,
+      runRecordEvidence: () => okAsync(REPORT),
+    })
+    const result = await cb({
+      confirm: true,
+      sourceId: 'ca-cdtfa-online-services',
+      evidence: { accountStatus: 'active' },
+    })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({
+      ok: true,
+      sourceId: 'ca-cdtfa-online-services',
+    })
+  })
+
+  it('returns an error body when not confirmed', async () => {
+    const cb = createRecordEvidenceToolCallback({
+      config: testConfig,
+      logger,
+      runRecordEvidence: () => okAsync(REPORT),
+    })
+    const result = await cb({
+      confirm: false,
+      sourceId: 'ca-cdtfa-online-services',
+      evidence: {},
+    })
+    expect(result.isError).toBe(true)
+    const first = result.content[0]
+    if (first?.type === 'text') {
+      expect(first.text).toContain('unconfirmed')
+    }
+  })
+
+  it('returns an error body when the runner reports a wiring error', async () => {
+    const cb = createRecordEvidenceToolCallback({
+      config: testConfig,
+      logger,
+      runRecordEvidence: () =>
+        errAsync({
+          type: 'wiring' as const,
+          message: 'jurisdiction conflict',
+        }),
+    })
+    const result = await cb({
+      confirm: true,
+      sourceId: 'ca-cdtfa-online-services',
+      evidence: {},
+    })
+    expect(result.isError).toBe(true)
+    const first = result.content[0]
+    if (first?.type === 'text') {
+      expect(first.text).toContain('wiring')
+    }
   })
 })
 
