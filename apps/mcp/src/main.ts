@@ -23,6 +23,7 @@ import { GoogleOAuthProvider } from './auth/provider'
 import { FirestoreOAuthStorage } from './auth/storage'
 import { loadConfig } from './config'
 import { createLogger } from './logger'
+import { registerComplianceSurface } from './tools/compliance/index'
 import { buildDonationsPrompt } from './tools/donations-prompt'
 import { handleGenerateLetter } from './tools/generate-letter'
 import { handleQueryBigQuery } from './tools/query-bigquery'
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
     const mcp = new McpServer(
       { name: 'donations-etl', version: '1.0.0' },
       {
-        capabilities: { tools: {}, prompts: {} },
+        capabilities: { tools: {}, prompts: {}, resources: {} },
       },
     )
 
@@ -211,6 +212,10 @@ async function main(): Promise<void> {
         }
       },
     )
+
+    // Compliance surface — tools, resources, and the overview prompt.
+    // See `docs/compliance-mcp/PLAN.md` for the full design.
+    registerComplianceSurface(mcp, { config, logger })
 
     return mcp
   }
