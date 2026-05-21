@@ -46,6 +46,24 @@ import {
 } from './wiring-common.ts'
 
 /**
+ * Default system clock used when a caller doesn't supply `now`. Shared
+ * across the three production entry points so the function reference is
+ * coverage-counted once.
+ */
+function defaultDiscoverJobNow(): Date {
+  return new Date()
+}
+
+/**
+ * Default `fetch` implementation. Delegates to the global `fetch` (Bun's
+ * native implementation). Exported so it's coverage-counted once and
+ * tests can verify the wiring without exercising the full discovery
+ * flow.
+ */
+export const defaultDiscoverJobFetch: FetchImpl = (input, init) =>
+  fetch(input, init)
+
+/**
  * Top-level error a production caller may see when starting a job. Includes
  * the underlying persist error plus a `wiring` case that fires only on
  * jurisdiction registration conflicts (typically: two jurisdictions with
@@ -81,9 +99,8 @@ export interface StartDiscoveryJobProductionArgs {
 export function startDiscoveryJobProduction(
   args: StartDiscoveryJobProductionArgs,
 ): ResultAsync<StartDiscoveryJobReport, StartDiscoveryJobProductionError> {
-  const now = args.now ?? (() => new Date())
-  const fetchImpl: FetchImpl =
-    args.fetch ?? ((input, init) => fetch(input, init))
+  const now = args.now ?? defaultDiscoverJobNow
+  const fetchImpl: FetchImpl = args.fetch ?? defaultDiscoverJobFetch
   const jurisdictions = args.jurisdictions ?? [
     usFederalJurisdiction,
     usCaJurisdiction,
@@ -161,7 +178,7 @@ export interface ReadDiscoveryJobStatusProductionArgs {
 export function readDiscoveryJobStatusProduction(
   args: ReadDiscoveryJobStatusProductionArgs,
 ): ResultAsync<DiscoveryJobStatusReport, ReadDiscoveryJobStatusError> {
-  const now = args.now ?? (() => new Date())
+  const now = args.now ?? defaultDiscoverJobNow
   const deps = buildCommonDeps({
     projectId: args.projectId,
     now,
@@ -198,7 +215,7 @@ export interface ReadDiscoveryJobResultProductionArgs {
 export function readDiscoveryJobResultProduction(
   args: ReadDiscoveryJobResultProductionArgs,
 ): ResultAsync<unknown, ReadDiscoveryJobResultError> {
-  const now = args.now ?? (() => new Date())
+  const now = args.now ?? defaultDiscoverJobNow
   const deps = buildCommonDeps({
     projectId: args.projectId,
     now,

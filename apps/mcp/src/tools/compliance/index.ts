@@ -27,8 +27,20 @@ import type {
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from 'pino'
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { Config } from '../../config'
+import {
+  DiscoverStartInputSchema,
+  handleComplianceDiscoverResult,
+  handleComplianceDiscoverStart,
+  handleComplianceDiscoverStatus,
+  type DiscoverResultError,
+  type DiscoverResultRunner,
+  type DiscoverStartError,
+  type DiscoverStartRunner,
+  type DiscoverStatusError,
+  type DiscoverStatusRunner,
+} from './discover'
 import {
   ConfirmSchema,
   OnboardingAnswersInputSchema,
@@ -70,6 +82,9 @@ export interface RegisterComplianceSurfaceDeps {
   readonly runOnboard?: OnboardRunner
   readonly runOnboardUpdate?: OnboardUpdateRunner
   readonly runRecordEvidence?: RecordEvidenceRunner
+  readonly runDiscoverStart?: DiscoverStartRunner
+  readonly runDiscoverStatus?: DiscoverStatusRunner
+  readonly runDiscoverResult?: DiscoverResultRunner
 }
 
 /**
@@ -86,6 +101,15 @@ export function formatOnboardErrorText(error: OnboardError): string {
  */
 export function formatRecordEvidenceErrorText(
   error: RecordEvidenceError,
+): string {
+  return `Error (${error.type}): ${error.message}`
+}
+
+/**
+ * Format an async-discover tool error.
+ */
+export function formatDiscoverErrorText(
+  error: DiscoverStartError | DiscoverStatusError | DiscoverResultError,
 ): string {
   return `Error (${error.type}): ${error.message}`
 }
@@ -349,6 +373,107 @@ export function createRecordEvidenceToolCallback(
 }
 
 /**
+ * Build the tool callback for `compliance-discover-start`.
+ */
+export function createDiscoverStartToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: {
+  confirm: boolean
+  sources?: readonly string[]
+  jurisdictionId?: string
+}) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceDiscoverStart(input, {
+      config: deps.config,
+      logger: deps.logger,
+      runDiscoverStart: deps.runDiscoverStart,
+    })
+    if (result.isErr()) {
+      return {
+        content: [
+          { type: 'text', text: formatDiscoverErrorText(result.error) },
+        ],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            { ok: true, jobId: result.value.jobId },
+            null,
+            2,
+          ),
+        },
+      ],
+    }
+  }
+}
+
+/**
+ * Build the tool callback for `compliance-discover-status`.
+ */
+export function createDiscoverStatusToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: { jobId: string }) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceDiscoverStatus(input, {
+      config: deps.config,
+      logger: deps.logger,
+      runDiscoverStatus: deps.runDiscoverStatus,
+    })
+    if (result.isErr()) {
+      return {
+        content: [
+          { type: 'text', text: formatDiscoverErrorText(result.error) },
+        ],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result.value, null, 2),
+        },
+      ],
+    }
+  }
+}
+
+/**
+ * Build the tool callback for `compliance-discover-result`.
+ */
+export function createDiscoverResultToolCallback(
+  deps: RegisterComplianceSurfaceDeps,
+): (input: { jobId: string }) => Promise<CallToolResult> {
+  return async (input) => {
+    const result = await handleComplianceDiscoverResult(input, {
+      config: deps.config,
+      logger: deps.logger,
+      runDiscoverResult: deps.runDiscoverResult,
+    })
+    if (result.isErr()) {
+      return {
+        content: [
+          { type: 'text', text: formatDiscoverErrorText(result.error) },
+        ],
+        isError: true,
+      }
+    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ ok: true, result: result.value }, null, 2),
+        },
+      ],
+    }
+  }
+}
+
+/**
  * Resource callback for `compliance://sources/registry`. Exported so
  * the registration code path is covered by direct unit tests.
  */
@@ -426,6 +551,53 @@ export function registerComplianceSurface(
       },
     },
     createRecordEvidenceToolCallback(deps),
+  )
+
+  mcp.registerTool(
+    'compliance-discover-start',
+    {
+      title: 'Compliance Discover (start)',
+      description:
+        'Launch an async compliance-discovery job. Returns a jobId immediately; the discovery runs in the background. Poll compliance-discover-status until status is "completed" then call compliance-discover-result. Requires confirm: true. Optional sources and jurisdictionId filters scope the run.',
+      inputSchema: {
+        confirm: ConfirmSchema,
+        sources: DiscoverStartInputSchema.sources,
+        jurisdictionId: DiscoverStartInputSchema.jurisdictionId,
+      },
+    },
+    createDiscoverStartToolCallback(deps),
+  )
+
+  mcp.registerTool(
+    'compliance-discover-status',
+    {
+      title: 'Compliance Discover (status)',
+      description:
+        'Read the lifecycle status of a discovery job: running / completed / failed, plus a per-source completion count.',
+      inputSchema: {
+        jobId: z
+          .string()
+          .min(1)
+          .describe('The job id returned by compliance-discover-start.'),
+      },
+    },
+    createDiscoverStatusToolCallback(deps),
+  )
+
+  mcp.registerTool(
+    'compliance-discover-result',
+    {
+      title: 'Compliance Discover (result)',
+      description:
+        'Fetch the assembled DiscoveryReport for a completed job. Rejects with not_ready if the job is still running or failed.',
+      inputSchema: {
+        jobId: z
+          .string()
+          .min(1)
+          .describe('The job id returned by compliance-discover-start.'),
+      },
+    },
+    createDiscoverResultToolCallback(deps),
   )
 
   mcp.registerResource(

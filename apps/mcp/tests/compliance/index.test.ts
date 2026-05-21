@@ -12,6 +12,10 @@ import pino from 'pino'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import type {
+  DiscoveryJobStatusReport,
+  StartDiscoveryJobReport,
+} from '../../../../src/compliance/skills/discover-job.ts'
+import type {
   OnboardingAnswers,
   OnboardingSummary,
 } from '../../../../src/compliance/skills/onboard.ts'
@@ -19,11 +23,15 @@ import type { RecordComplianceEvidenceReport } from '../../../../src/compliance/
 import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
 import type { Config } from '../../src/config'
 import {
+  createDiscoverResultToolCallback,
+  createDiscoverStartToolCallback,
+  createDiscoverStatusToolCallback,
   createOnboardToolCallback,
   createOnboardUpdateToolCallback,
   createRecordEvidenceToolCallback,
   createStatusResourceCallback,
   createStatusToolCallback,
+  formatDiscoverErrorText,
   formatOnboardErrorText,
   formatRecordEvidenceErrorText,
   interviewQuestionsResourceCallback,
@@ -449,6 +457,108 @@ describe('createRecordEvidenceToolCallback', () => {
     if (first?.type === 'text') {
       expect(first.text).toContain('wiring')
     }
+  })
+})
+
+describe('formatDiscoverErrorText', () => {
+  it('renders type + message for any discover-error shape', () => {
+    expect(formatDiscoverErrorText({ type: 'persist', message: 'no' })).toBe(
+      'Error (persist): no',
+    )
+    expect(
+      formatDiscoverErrorText({ type: 'not_ready', message: 'wait' }),
+    ).toBe('Error (not_ready): wait')
+  })
+})
+
+describe('createDiscoverStartToolCallback', () => {
+  const STARTED: StartDiscoveryJobReport = { jobId: 'job-1' }
+
+  it('returns success when confirmed', async () => {
+    const cb = createDiscoverStartToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverStart: () => okAsync(STARTED),
+    })
+    const result = await cb({ confirm: true })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({
+      ok: true,
+      jobId: 'job-1',
+    })
+  })
+
+  it('returns error when unconfirmed', async () => {
+    const cb = createDiscoverStartToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverStart: () => okAsync(STARTED),
+    })
+    const result = await cb({ confirm: false })
+    expect(result.isError).toBe(true)
+  })
+})
+
+describe('createDiscoverStatusToolCallback', () => {
+  const STATUS: DiscoveryJobStatusReport = {
+    jobId: 'job-1',
+    status: 'completed',
+    startedAt: '2024-05-01T00:00:00Z',
+    finishedAt: '2024-05-01T00:00:30Z',
+    requestedSources: null,
+    requestedJurisdiction: null,
+    completedSourceCount: 2,
+    errorType: null,
+    errorMessage: null,
+  }
+
+  it('returns the status JSON', async () => {
+    const cb = createDiscoverStatusToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverStatus: () => okAsync(STATUS),
+    })
+    const result = await cb({ jobId: 'job-1' })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({ status: 'completed' })
+  })
+
+  it('returns an error for unknown jobs', async () => {
+    const cb = createDiscoverStatusToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverStatus: () =>
+        errAsync({ type: 'not_found' as const, message: 'gone' }),
+    })
+    const result = await cb({ jobId: 'missing' })
+    expect(result.isError).toBe(true)
+  })
+})
+
+describe('createDiscoverResultToolCallback', () => {
+  it('returns the stored result', async () => {
+    const cb = createDiscoverResultToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverResult: () => okAsync({ runs: [], findings: [] }),
+    })
+    const result = await cb({ jobId: 'job-1' })
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({ ok: true })
+  })
+
+  it('returns an error when the job is not ready', async () => {
+    const cb = createDiscoverResultToolCallback({
+      config: testConfig,
+      logger,
+      runDiscoverResult: () =>
+        errAsync({
+          type: 'not_ready' as const,
+          message: 'still running',
+        }),
+    })
+    const result = await cb({ jobId: 'job-1' })
+    expect(result.isError).toBe(true)
   })
 })
 
