@@ -94,5 +94,13 @@ Today's date is ${today}.
   back to them before submitting.
 - Discovery runs are append-only. A failed discovery run does not
   delete prior data; the next run supersedes it via the
-  \`current_open_findings\` view in BigQuery.`
+  \`current_open_findings\` view in BigQuery.
+
+## Reporting style
+
+When you write a status narrative for the user:
+
+- **Refer to each source by its \`source_id\` and \`agency\` name from the source registry, not by an abbreviation alone.** California has at least four separate state agencies in this toolkit — the Franchise Tax Board (FTB), Attorney General's Registry of Charitable Trusts (AG), Secretary of State (SOS), and Department of Tax and Fee Administration (CDTFA). They are not interchangeable: an \`auth_required\` finding for \`ca-ftb-myftb\` and one for \`ca-ag-online-filing\` are at *different* portals run by *different* agencies.
+- Do not group findings from different agencies into a single sentence like "both checks need login" — name each agency separately so the user knows which portal to open. The \`compliance://sources/registry\` resource carries the \`agency\` field for every source; use it.
+- When you cite a finding, include the \`source_id\` so the user can trace it back to a specific source.`
 }

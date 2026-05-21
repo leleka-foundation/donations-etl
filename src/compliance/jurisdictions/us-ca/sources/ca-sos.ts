@@ -414,6 +414,7 @@ function resultToAsync<T>(
 export const caSosBizfileSource: Source = {
   id: 'ca-sos-bizfile',
   jurisdiction: 'us-ca',
+  agency: 'California Secretary of State',
   kind: 'playwright',
   authRequired: false,
   description:

@@ -60,6 +60,7 @@ const StatusBodySchema = z.object({
 const SourceItemSchema = z.object({
   sourceId: z.string(),
   jurisdictionId: z.string(),
+  agency: z.string(),
   description: z.string(),
   accessUrl: z.string(),
   accessMethod: z.string(),
@@ -87,6 +88,7 @@ const InterviewQuestionsBodySchema = z.object({
 
 const ManualEvidenceBodySchema = z.object({
   sourceId: z.string(),
+  agency: z.string(),
   description: z.string(),
   accessUrl: z.string(),
 })
@@ -145,6 +147,7 @@ describe('buildSourceRegistryResource', () => {
     const manualSource: Source = {
       id: 'manual-test-source',
       jurisdiction: 'us-test',
+      agency: 'Test State Agency',
       kind: 'manual',
       authRequired: false,
       description: 'A manual-only test source.',
@@ -242,6 +245,7 @@ describe('buildManualEvidenceInstructionsResource', () => {
     const manualSource: Source = {
       id: 'manual-test-source',
       jurisdiction: 'us-test',
+      agency: 'Test State Agency',
       kind: 'manual',
       authRequired: false,
       description: 'A manual-only test source.',

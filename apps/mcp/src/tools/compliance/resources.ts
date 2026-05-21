@@ -97,6 +97,10 @@ export function buildSourceRegistryResource(
     j.sources.map((source) => ({
       sourceId: source.id,
       jurisdictionId: j.id,
+      // Explicit agency name so downstream narrators don't conflate
+      // sources from different agencies (e.g. CA FTB vs. CA AG)
+      // because they share the same jurisdictionId.
+      agency: source.agency,
       kind: source.kind,
       description: source.description,
       accessUrl: source.accessUrl,
@@ -166,6 +170,7 @@ export function buildManualEvidenceInstructionsResource(
       const body: Record<string, unknown> = {
         sourceId: source.id,
         jurisdictionId: j.id,
+        agency: source.agency,
         description: source.description,
         accessUrl: source.accessUrl,
         tosUrl: source.tosUrl,
