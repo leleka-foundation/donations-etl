@@ -24,6 +24,7 @@ import type {
   ReadDiscoveryJobStatusError,
   StartDiscoveryJobReport,
 } from '../../../../../src/compliance/skills/discover-job.ts'
+import type { FirestoreClientLike } from '../../../../../src/compliance/state/firestore-jobs.ts'
 import type { Config } from '../../config'
 
 /**
@@ -75,32 +76,38 @@ export const DiscoverStartInputSchema = {
 export type DiscoverStartRunner = (args: {
   readonly projectId: string
   readonly filter: DiscoveryJobFilter
+  readonly firestore: FirestoreClientLike
 }) => ReturnType<typeof startDiscoveryJobProduction>
 
 export type DiscoverStatusRunner = (args: {
   readonly projectId: string
   readonly jobId: string
+  readonly firestore: FirestoreClientLike
 }) => ReturnType<typeof readDiscoveryJobStatusProduction>
 
 export type DiscoverResultRunner = (args: {
   readonly projectId: string
   readonly jobId: string
+  readonly firestore: FirestoreClientLike
 }) => ReturnType<typeof readDiscoveryJobResultProduction>
 
 export const defaultDiscoverStartRunner: DiscoverStartRunner = ({
   projectId,
   filter,
-}) => startDiscoveryJobProduction({ projectId, filter })
+  firestore,
+}) => startDiscoveryJobProduction({ projectId, filter, firestore })
 
 export const defaultDiscoverStatusRunner: DiscoverStatusRunner = ({
   projectId,
   jobId,
-}) => readDiscoveryJobStatusProduction({ projectId, jobId })
+  firestore,
+}) => readDiscoveryJobStatusProduction({ projectId, jobId, firestore })
 
 export const defaultDiscoverResultRunner: DiscoverResultRunner = ({
   projectId,
   jobId,
-}) => readDiscoveryJobResultProduction({ projectId, jobId })
+  firestore,
+}) => readDiscoveryJobResultProduction({ projectId, jobId, firestore })
 
 export function resolveDiscoverStartRunner(
   override?: DiscoverStartRunner,
@@ -122,10 +129,16 @@ export function resolveDiscoverResultRunner(
 
 /**
  * Shared deps for the three handlers.
+ *
+ * `firestore` is required: the async-job lifecycle (running ->
+ * completed/failed) is tracked in Firestore because BigQuery's
+ * streaming buffer doesn't allow UPDATEs on recently-inserted rows
+ * (which leaves polling stuck on `running` for tens of minutes).
  */
 export interface DiscoverDeps {
   readonly config: Config
   readonly logger: Logger
+  readonly firestore: FirestoreClientLike
   readonly runDiscoverStart?: DiscoverStartRunner
   readonly runDiscoverStatus?: DiscoverStatusRunner
   readonly runDiscoverResult?: DiscoverResultRunner
@@ -195,6 +208,7 @@ export async function handleComplianceDiscoverStart(
   const result = await runner({
     projectId: deps.config.PROJECT_ID,
     filter: toJobFilter(input),
+    firestore: deps.firestore,
   })
   if (result.isErr()) {
     return err(translateStartError(result.error))
@@ -214,6 +228,7 @@ export async function handleComplianceDiscoverStatus(
   const result = await runner({
     projectId: deps.config.PROJECT_ID,
     jobId: input.jobId,
+    firestore: deps.firestore,
   })
   if (result.isErr()) {
     return err(translateStatusError(result.error))
@@ -233,6 +248,7 @@ export async function handleComplianceDiscoverResult(
   const result = await runner({
     projectId: deps.config.PROJECT_ID,
     jobId: input.jobId,
+    firestore: deps.firestore,
   })
   if (result.isErr()) {
     return err(translateResultError(result.error))

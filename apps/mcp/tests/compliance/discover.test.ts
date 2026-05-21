@@ -10,7 +10,37 @@ import type {
   DiscoveryJobStatusReport,
   StartDiscoveryJobReport,
 } from '../../../../src/compliance/skills/discover-job.ts'
+import type { FirestoreClientLike } from '../../../../src/compliance/state/firestore-jobs.ts'
 import type { Config } from '../../src/config'
+
+function makeFakeFirestore(): FirestoreClientLike {
+  const docs = new Map<string, Record<string, unknown>>()
+  return {
+    doc(path: string) {
+      return {
+        get(): Promise<{
+          exists: boolean
+          data(): Record<string, unknown> | undefined
+        }> {
+          const data = docs.get(path)
+          return Promise.resolve({
+            exists: data !== undefined,
+            data: () => data,
+          })
+        },
+        set(data: Record<string, unknown>): Promise<unknown> {
+          docs.set(path, data)
+          return Promise.resolve()
+        },
+        update(patch: Record<string, unknown>): Promise<unknown> {
+          docs.set(path, { ...(docs.get(path) ?? {}), ...patch })
+          return Promise.resolve()
+        },
+      }
+    },
+  }
+}
+
 import {
   defaultDiscoverResultRunner,
   defaultDiscoverStartRunner,
@@ -94,7 +124,12 @@ describe('handleComplianceDiscoverStart', () => {
     const runner = vi.fn<DiscoverStartRunner>(() => okAsync(START_REPORT))
     const result = await handleComplianceDiscoverStart(
       { confirm: false },
-      { config: testConfig, logger, runDiscoverStart: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStart: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -106,15 +141,22 @@ describe('handleComplianceDiscoverStart', () => {
     const runner = vi.fn<DiscoverStartRunner>(() => okAsync(START_REPORT))
     const result = await handleComplianceDiscoverStart(
       { confirm: true, sources: ['irs-teos'] },
-      { config: testConfig, logger, runDiscoverStart: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStart: runner,
+      },
     )
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
     expect(result.value.jobId).toBe(JOB_ID)
-    expect(runner).toHaveBeenCalledWith({
-      projectId: 'test-project',
-      filter: { sources: ['irs-teos'], jurisdictionId: null },
-    })
+    expect(runner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'test-project',
+        filter: { sources: ['irs-teos'], jurisdictionId: null },
+      }),
+    )
   })
 
   it('surfaces a persist error from the runner', async () => {
@@ -123,7 +165,12 @@ describe('handleComplianceDiscoverStart', () => {
     )
     const result = await handleComplianceDiscoverStart(
       { confirm: true },
-      { config: testConfig, logger, runDiscoverStart: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStart: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -136,7 +183,12 @@ describe('handleComplianceDiscoverStart', () => {
     )
     const result = await handleComplianceDiscoverStart(
       { confirm: true },
-      { config: testConfig, logger, runDiscoverStart: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStart: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -149,7 +201,12 @@ describe('handleComplianceDiscoverStatus', () => {
     const runner = vi.fn<DiscoverStatusRunner>(() => okAsync(STATUS_REPORT))
     const result = await handleComplianceDiscoverStatus(
       { jobId: JOB_ID },
-      { config: testConfig, logger, runDiscoverStatus: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStatus: runner,
+      },
     )
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
@@ -162,7 +219,12 @@ describe('handleComplianceDiscoverStatus', () => {
     )
     const result = await handleComplianceDiscoverStatus(
       { jobId: 'missing' },
-      { config: testConfig, logger, runDiscoverStatus: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStatus: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -175,7 +237,12 @@ describe('handleComplianceDiscoverStatus', () => {
     )
     const result = await handleComplianceDiscoverStatus(
       { jobId: JOB_ID },
-      { config: testConfig, logger, runDiscoverStatus: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverStatus: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -189,7 +256,12 @@ describe('handleComplianceDiscoverResult', () => {
     const runner = vi.fn<DiscoverResultRunner>(() => okAsync(REPORT))
     const result = await handleComplianceDiscoverResult(
       { jobId: JOB_ID },
-      { config: testConfig, logger, runDiscoverResult: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverResult: runner,
+      },
     )
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
@@ -205,7 +277,12 @@ describe('handleComplianceDiscoverResult', () => {
     )
     const result = await handleComplianceDiscoverResult(
       { jobId: JOB_ID },
-      { config: testConfig, logger, runDiscoverResult: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverResult: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -218,7 +295,12 @@ describe('handleComplianceDiscoverResult', () => {
     )
     const result = await handleComplianceDiscoverResult(
       { jobId: 'missing' },
-      { config: testConfig, logger, runDiscoverResult: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverResult: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -231,7 +313,12 @@ describe('handleComplianceDiscoverResult', () => {
     )
     const result = await handleComplianceDiscoverResult(
       { jobId: JOB_ID },
-      { config: testConfig, logger, runDiscoverResult: runner },
+      {
+        config: testConfig,
+        logger,
+        firestore: makeFakeFirestore(),
+        runDiscoverResult: runner,
+      },
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
@@ -277,19 +364,23 @@ describe('default discover runners', () => {
     expect(typeof defaultDiscoverStartRunner).toBe('function')
     expect(typeof defaultDiscoverStatusRunner).toBe('function')
     expect(typeof defaultDiscoverResultRunner).toBe('function')
+    const firestore = makeFakeFirestore()
     const start = defaultDiscoverStartRunner({
       projectId: 'test-project',
       filter: { sources: null, jurisdictionId: null },
+      firestore,
     })
     expect(typeof start.match).toBe('function')
     const status = defaultDiscoverStatusRunner({
       projectId: 'test-project',
       jobId: JOB_ID,
+      firestore,
     })
     expect(typeof status.match).toBe('function')
     const out = defaultDiscoverResultRunner({
       projectId: 'test-project',
       jobId: JOB_ID,
+      firestore,
     })
     expect(typeof out.match).toBe('function')
   })

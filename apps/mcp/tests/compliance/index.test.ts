@@ -21,6 +21,7 @@ import type {
 } from '../../../../src/compliance/skills/onboard.ts'
 import type { RecordComplianceEvidenceReport } from '../../../../src/compliance/skills/record-evidence.ts'
 import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
+import type { FirestoreClientLike } from '../../../../src/compliance/state/firestore-jobs.ts'
 import type { Config } from '../../src/config'
 import {
   createComplianceOverviewPromptCallback,
@@ -41,6 +42,34 @@ import {
   sourceRegistryResourceCallback,
 } from '../../src/tools/compliance/index'
 import { parseFirstResourceJson, parseFirstToolJson } from './test-utils'
+
+function makeFakeFirestore(): FirestoreClientLike {
+  const docs = new Map<string, Record<string, unknown>>()
+  return {
+    doc(path: string) {
+      return {
+        get(): Promise<{
+          exists: boolean
+          data(): Record<string, unknown> | undefined
+        }> {
+          const data = docs.get(path)
+          return Promise.resolve({
+            exists: data !== undefined,
+            data: () => data,
+          })
+        },
+        set(data: Record<string, unknown>): Promise<unknown> {
+          docs.set(path, data)
+          return Promise.resolve()
+        },
+        update(patch: Record<string, unknown>): Promise<unknown> {
+          docs.set(path, { ...(docs.get(path) ?? {}), ...patch })
+          return Promise.resolve()
+        },
+      }
+    },
+  }
+}
 
 const testConfig: Config = {
   PORT: 8080,
@@ -90,6 +119,7 @@ describe('createStatusToolCallback', () => {
     const cb = createStatusToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       readStatus: () => okAsync(STUB_REPORT),
     })
     const result = await cb()
@@ -101,6 +131,7 @@ describe('createStatusToolCallback', () => {
     const cb = createStatusToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       readStatus: () =>
         errAsync({
           type: 'not_onboarded' as const,
@@ -122,6 +153,7 @@ describe('createStatusResourceCallback', () => {
     const cb = createStatusResourceCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       readStatus: () => okAsync(STUB_REPORT),
     })
     const result = await cb()
@@ -134,6 +166,7 @@ describe('createStatusResourceCallback', () => {
     const cb = createStatusResourceCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       readStatus: () =>
         errAsync({
           type: 'load' as const,
@@ -268,6 +301,7 @@ describe('createOnboardToolCallback', () => {
     const cb = createOnboardToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runOnboard: () => okAsync(SUMMARY),
     })
     const result = await cb({ confirm: true, answers: ANSWERS })
@@ -282,6 +316,7 @@ describe('createOnboardToolCallback', () => {
     const cb = createOnboardToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runOnboard: () => okAsync(SUMMARY),
     })
     const result = await cb({ confirm: false, answers: ANSWERS })
@@ -326,6 +361,7 @@ describe('createOnboardUpdateToolCallback', () => {
     const cb = createOnboardUpdateToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runOnboardUpdate: () => okAsync(SUMMARY),
     })
     const result = await cb({
@@ -343,6 +379,7 @@ describe('createOnboardUpdateToolCallback', () => {
     const cb = createOnboardUpdateToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runOnboardUpdate: () => okAsync(SUMMARY),
     })
     const result = await cb({
@@ -356,6 +393,7 @@ describe('createOnboardUpdateToolCallback', () => {
     const cb = createOnboardUpdateToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runOnboardUpdate: () =>
         errAsync({
           type: 'not_onboarded' as const,
@@ -406,6 +444,7 @@ describe('createRecordEvidenceToolCallback', () => {
     const cb = createRecordEvidenceToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runRecordEvidence: () => okAsync(REPORT),
     })
     const result = await cb({
@@ -424,6 +463,7 @@ describe('createRecordEvidenceToolCallback', () => {
     const cb = createRecordEvidenceToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runRecordEvidence: () => okAsync(REPORT),
     })
     const result = await cb({
@@ -442,6 +482,7 @@ describe('createRecordEvidenceToolCallback', () => {
     const cb = createRecordEvidenceToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runRecordEvidence: () =>
         errAsync({
           type: 'wiring' as const,
@@ -479,6 +520,7 @@ describe('createDiscoverStartToolCallback', () => {
     const cb = createDiscoverStartToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverStart: () => okAsync(STARTED),
     })
     const result = await cb({ confirm: true })
@@ -493,6 +535,7 @@ describe('createDiscoverStartToolCallback', () => {
     const cb = createDiscoverStartToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverStart: () => okAsync(STARTED),
     })
     const result = await cb({ confirm: false })
@@ -517,6 +560,7 @@ describe('createDiscoverStatusToolCallback', () => {
     const cb = createDiscoverStatusToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverStatus: () => okAsync(STATUS),
     })
     const result = await cb({ jobId: 'job-1' })
@@ -528,6 +572,7 @@ describe('createDiscoverStatusToolCallback', () => {
     const cb = createDiscoverStatusToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverStatus: () =>
         errAsync({ type: 'not_found' as const, message: 'gone' }),
     })
@@ -541,6 +586,7 @@ describe('createDiscoverResultToolCallback', () => {
     const cb = createDiscoverResultToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverResult: () => okAsync({ runs: [], findings: [] }),
     })
     const result = await cb({ jobId: 'job-1' })
@@ -552,6 +598,7 @@ describe('createDiscoverResultToolCallback', () => {
     const cb = createDiscoverResultToolCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       runDiscoverResult: () =>
         errAsync({
           type: 'not_ready' as const,
@@ -568,6 +615,7 @@ describe('createComplianceOverviewPromptCallback', () => {
     const cb = createComplianceOverviewPromptCallback({
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
     })
     const result = cb()
     expect(result.messages).toHaveLength(1)
@@ -587,6 +635,7 @@ describe('registerComplianceSurface', () => {
     registerComplianceSurface(mcp, {
       config: testConfig,
       logger,
+      firestore: makeFakeFirestore(),
       readStatus: () => okAsync(STUB_REPORT),
     })
     return mcp
@@ -605,6 +654,7 @@ describe('registerComplianceSurface', () => {
       registerComplianceSurface(mcp, {
         config: testConfig,
         logger,
+        firestore: makeFakeFirestore(),
       }),
     ).not.toThrow()
   })
@@ -615,6 +665,7 @@ describe('registerComplianceSurface', () => {
       registerComplianceSurface(mcp, {
         config: testConfig,
         logger,
+        firestore: makeFakeFirestore(),
       }),
     ).toThrow()
   })

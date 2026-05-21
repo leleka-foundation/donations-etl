@@ -6,18 +6,41 @@
  * GCP-backed default deps.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
 import { usCaJurisdiction } from '../jurisdictions/us-ca/index.ts'
 import { usFederalJurisdiction } from '../jurisdictions/us-federal/index.ts'
+import type { FirestoreClientLike } from '../state/firestore-jobs.ts'
 
-const QueryOptsSchema = z.object({ query: z.string().optional() }).loose()
-
-function readQueryFromCall(call: unknown): string | undefined {
-  if (!Array.isArray(call)) return undefined
-  const first: unknown = call[0]
-  if (typeof first !== 'object' || first === null) return undefined
-  const parsed = QueryOptsSchema.safeParse(first)
-  return parsed.success ? parsed.data.query : undefined
+/**
+ * In-memory Firestore stand-in for tests. Stores docs keyed by path.
+ * Sufficient to satisfy DiscoveryJobsAccessor's set/update/get usage.
+ */
+function makeFakeFirestore(): FirestoreClientLike {
+  const docs = new Map<string, Record<string, unknown>>()
+  return {
+    doc(path: string) {
+      return {
+        get(): Promise<{
+          exists: boolean
+          data(): Record<string, unknown> | undefined
+        }> {
+          const data = docs.get(path)
+          return Promise.resolve({
+            exists: data !== undefined,
+            data: () => data,
+          })
+        },
+        set(data: Record<string, unknown>): Promise<unknown> {
+          docs.set(path, data)
+          return Promise.resolve()
+        },
+        update(patch: Record<string, unknown>): Promise<unknown> {
+          const prev = docs.get(path) ?? {}
+          docs.set(path, { ...prev, ...patch })
+          return Promise.resolve()
+        },
+      }
+    },
+  }
 }
 
 const mockBqQuery =
@@ -171,6 +194,7 @@ describe('startDiscoveryJobProduction', () => {
       jurisdictions: [usFederalJurisdiction, usFederalJurisdiction],
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: makeFakeFirestore(),
       spawn: () => undefined,
     })
     expect(result.isErr()).toBe(true)
@@ -178,7 +202,7 @@ describe('startDiscoveryJobProduction', () => {
     expect(result.error.type).toBe('wiring')
   })
 
-  it('inserts the discovery_jobs row when registry build succeeds', async () => {
+  it('writes the discovery_jobs document to Firestore when registry build succeeds', async () => {
     mockBqQuery.mockReset()
     mockBqQuery.mockResolvedValue([[], {}])
     mockBqDataset.mockReturnValue({
@@ -191,11 +215,14 @@ describe('startDiscoveryJobProduction', () => {
       })),
     })
 
+    // Pass our fake explicitly so we can inspect it afterwards.
+    const fakeFirestore = makeFakeFirestore()
     const result = await startDiscoveryJobProduction({
       projectId: 'my-proj',
       filter: { sources: null, jurisdictionId: null },
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: fakeFirestore,
       // Suppress background spawn so the test stays deterministic.
       spawn: () => undefined,
       generateJobId: () => '11111111-1111-4111-8111-111111111111',
@@ -204,9 +231,12 @@ describe('startDiscoveryJobProduction', () => {
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
     expect(result.value.jobId).toBe('11111111-1111-4111-8111-111111111111')
-    // discovery_jobs INSERT was executed
-    const sql = readQueryFromCall(mockBqQuery.mock.calls[0])
-    expect(sql).toMatch(/INSERT INTO `my-proj\.compliance\.discovery_jobs`/)
+    // The job doc must be writable to / readable from Firestore.
+    const snap = await fakeFirestore
+      .doc('mcp_compliance_jobs/11111111-1111-4111-8111-111111111111')
+      .get()
+    expect(snap.exists).toBe(true)
+    expect(snap.data()?.status).toBe('running')
   })
 
   it('invokes the background discovery runner when spawned', async () => {
@@ -244,6 +274,7 @@ describe('startDiscoveryJobProduction', () => {
       filter: { sources: [], jurisdictionId: null },
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: makeFakeFirestore(),
       spawn: recordingSpawn,
       generateJobId: () => '22222222-2222-4222-8222-222222222222',
     })
@@ -272,6 +303,7 @@ describe('startDiscoveryJobProduction', () => {
       filter: { sources: null, jurisdictionId: null },
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: makeFakeFirestore(),
       spawn: () => undefined,
     })
     expect(result.isOk()).toBe(true)
@@ -279,37 +311,31 @@ describe('startDiscoveryJobProduction', () => {
 })
 
 describe('readDiscoveryJobStatusProduction', () => {
-  it('reads the parent row and counts child runs', async () => {
+  it('reads the job doc from Firestore and counts child runs from BQ', async () => {
     mockBqQuery.mockReset()
-    mockBqQuery.mockImplementation((opts: unknown) => {
-      const parsedOpts = QueryOptsSchema.safeParse(opts)
-      const query = parsedOpts.success ? parsedOpts.data.query : undefined
-      if (query?.includes('.compliance.discovery_jobs') === true) {
-        return Promise.resolve([
-          [
-            {
-              job_id: '11111111-1111-4111-8111-111111111111',
-              started_at: { value: '2024-05-01T00:00:00Z' },
-              finished_at: null,
-              status: 'running',
-              requested_sources: null,
-              requested_jurisdiction: null,
-              error_type: null,
-              error_message: null,
-              result: null,
-            },
-          ],
-          {},
-        ])
-      }
-      return Promise.resolve([[], {}])
-    })
+    mockBqQuery.mockResolvedValue([[], {}])
+    const fakeFirestore = makeFakeFirestore()
+    // Seed Firestore with a running job doc.
+    await fakeFirestore
+      .doc('mcp_compliance_jobs/11111111-1111-4111-8111-111111111111')
+      .set({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        started_at: '2024-05-01T00:00:00Z',
+        finished_at: null,
+        status: 'running',
+        requested_sources: null,
+        requested_jurisdiction: null,
+        error_type: null,
+        error_message: null,
+        result: null,
+      })
 
     const result = await readDiscoveryJobStatusProduction({
       projectId: 'my-proj',
       jobId: '11111111-1111-4111-8111-111111111111',
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: fakeFirestore,
     })
 
     expect(result.isOk()).toBe(true)
@@ -319,37 +345,28 @@ describe('readDiscoveryJobStatusProduction', () => {
 })
 
 describe('readDiscoveryJobResultProduction', () => {
-  it('returns the stored result when the job is completed', async () => {
-    mockBqQuery.mockReset()
-    mockBqQuery.mockImplementation((opts: unknown) => {
-      const parsedOpts = QueryOptsSchema.safeParse(opts)
-      const query = parsedOpts.success ? parsedOpts.data.query : undefined
-      if (query?.includes('.compliance.discovery_jobs') === true) {
-        return Promise.resolve([
-          [
-            {
-              job_id: '11111111-1111-4111-8111-111111111111',
-              started_at: { value: '2024-05-01T00:00:00Z' },
-              finished_at: { value: '2024-05-01T00:00:30Z' },
-              status: 'completed',
-              requested_sources: null,
-              requested_jurisdiction: null,
-              error_type: null,
-              error_message: null,
-              result: { runs: [], findings: [] },
-            },
-          ],
-          {},
-        ])
-      }
-      return Promise.resolve([[], {}])
-    })
+  it('returns the stored result from Firestore when the job is completed', async () => {
+    const fakeFirestore = makeFakeFirestore()
+    await fakeFirestore
+      .doc('mcp_compliance_jobs/11111111-1111-4111-8111-111111111111')
+      .set({
+        job_id: '11111111-1111-4111-8111-111111111111',
+        started_at: '2024-05-01T00:00:00Z',
+        finished_at: '2024-05-01T00:00:30Z',
+        status: 'completed',
+        requested_sources: null,
+        requested_jurisdiction: null,
+        error_type: null,
+        error_message: null,
+        result: { runs: [], findings: [] },
+      })
 
     const result = await readDiscoveryJobResultProduction({
       projectId: 'my-proj',
       jobId: '11111111-1111-4111-8111-111111111111',
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
+      firestore: fakeFirestore,
     })
 
     expect(result.isOk()).toBe(true)

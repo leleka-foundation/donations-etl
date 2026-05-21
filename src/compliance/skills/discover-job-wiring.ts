@@ -22,8 +22,12 @@ import {
   type DownloadCacheStore,
 } from '../sources/download-cache.ts'
 import { createFindingsAccessor } from '../state/bq-findings.ts'
-import { createDiscoveryJobsAccessor } from '../state/bq-jobs.ts'
+import type { DiscoveryJobsAccessor } from '../state/bq-jobs.ts'
 import { createDiscoveryRunsAccessor } from '../state/bq-runs.ts'
+import {
+  createFirestoreDiscoveryJobsAccessor,
+  type FirestoreClientLike,
+} from '../state/firestore-jobs.ts'
 import type { FetchImpl, Jurisdiction } from '../types/index.ts'
 import {
   readDiscoveryJobResult,
@@ -75,10 +79,17 @@ export type StartDiscoveryJobProductionError =
 
 /**
  * Wiring args for the production start entry point.
+ *
+ * `firestore` is required because the async-job lifecycle (running /
+ * completed / failed transitions) needs read-after-write consistency,
+ * which BigQuery's streaming buffer cannot provide for ~30-90 minutes
+ * after insert. Callers pass the same Firestore instance the OAuth
+ * storage uses.
  */
 export interface StartDiscoveryJobProductionArgs {
   readonly projectId: string
   readonly filter: DiscoveryJobFilter
+  readonly firestore: FirestoreClientLike
   readonly bqFactory?: BigQueryFactory
   readonly secretManagerFactory?: SecretManagerFactory
   readonly now?: () => Date
@@ -125,10 +136,8 @@ export function startDiscoveryJobProduction(
     bqFactory: args.bqFactory,
     secretManagerFactory: args.secretManagerFactory,
   })
-  const jobsAccessor = createDiscoveryJobsAccessor({
-    runner: deps.queryRunner,
-    projectId: args.projectId,
-  })
+  const jobsAccessor: DiscoveryJobsAccessor =
+    createFirestoreDiscoveryJobsAccessor(args.firestore)
   const runsAccessor = createDiscoveryRunsAccessor({
     runner: deps.queryRunner,
     projectId: args.projectId,
@@ -167,6 +176,7 @@ export function startDiscoveryJobProduction(
 export interface ReadDiscoveryJobStatusProductionArgs {
   readonly projectId: string
   readonly jobId: string
+  readonly firestore: FirestoreClientLike
   readonly bqFactory?: BigQueryFactory
   readonly secretManagerFactory?: SecretManagerFactory
   readonly now?: () => Date
@@ -186,10 +196,7 @@ export function readDiscoveryJobStatusProduction(
     secretManagerFactory: args.secretManagerFactory,
   })
   return readDiscoveryJobStatus({
-    jobsAccessor: createDiscoveryJobsAccessor({
-      runner: deps.queryRunner,
-      projectId: args.projectId,
-    }),
+    jobsAccessor: createFirestoreDiscoveryJobsAccessor(args.firestore),
     runsAccessor: createDiscoveryRunsAccessor({
       runner: deps.queryRunner,
       projectId: args.projectId,
@@ -204,6 +211,7 @@ export function readDiscoveryJobStatusProduction(
 export interface ReadDiscoveryJobResultProductionArgs {
   readonly projectId: string
   readonly jobId: string
+  readonly firestore: FirestoreClientLike
   readonly bqFactory?: BigQueryFactory
   readonly secretManagerFactory?: SecretManagerFactory
   readonly now?: () => Date
@@ -215,18 +223,8 @@ export interface ReadDiscoveryJobResultProductionArgs {
 export function readDiscoveryJobResultProduction(
   args: ReadDiscoveryJobResultProductionArgs,
 ): ResultAsync<unknown, ReadDiscoveryJobResultError> {
-  const now = args.now ?? defaultDiscoverJobNow
-  const deps = buildCommonDeps({
-    projectId: args.projectId,
-    now,
-    bqFactory: args.bqFactory,
-    secretManagerFactory: args.secretManagerFactory,
-  })
   return readDiscoveryJobResult({
-    jobsAccessor: createDiscoveryJobsAccessor({
-      runner: deps.queryRunner,
-      projectId: args.projectId,
-    }),
+    jobsAccessor: createFirestoreDiscoveryJobsAccessor(args.firestore),
     jobId: args.jobId,
   })
 }

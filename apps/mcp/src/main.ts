@@ -221,7 +221,11 @@ async function main(): Promise<void> {
 
     // Compliance surface — tools, resources, and the overview prompt.
     // See `docs/compliance-mcp/PLAN.md` for the full design.
-    registerComplianceSurface(mcp, { config, logger })
+    registerComplianceSurface(mcp, {
+      config,
+      logger,
+      firestore: storage.client,
+    })
 
     return mcp
   }

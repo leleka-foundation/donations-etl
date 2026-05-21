@@ -28,6 +28,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Logger } from 'pino'
 import { z } from 'zod'
+import type { FirestoreClientLike } from '../../../../../src/compliance/state/firestore-jobs.ts'
 import type { Config } from '../../config'
 import {
   DiscoverStartInputSchema,
@@ -79,6 +80,14 @@ import { handleComplianceStatus, type ComplianceStatusReader } from './status'
 export interface RegisterComplianceSurfaceDeps {
   readonly config: Config
   readonly logger: Logger
+  /**
+   * Firestore handle for async-job lifecycle tracking. The MCP server
+   * already has one for OAuth state; pass it through here so the
+   * compliance-discover tools can do read-after-write status reads
+   * (which BigQuery can't reliably do during its 30-90 minute
+   * streaming buffer window).
+   */
+  readonly firestore: FirestoreClientLike
   readonly readStatus?: ComplianceStatusReader
   readonly runOnboard?: OnboardRunner
   readonly runOnboardUpdate?: OnboardUpdateRunner
@@ -387,6 +396,7 @@ export function createDiscoverStartToolCallback(
     const result = await handleComplianceDiscoverStart(input, {
       config: deps.config,
       logger: deps.logger,
+      firestore: deps.firestore,
       runDiscoverStart: deps.runDiscoverStart,
     })
     if (result.isErr()) {
@@ -422,6 +432,7 @@ export function createDiscoverStatusToolCallback(
     const result = await handleComplianceDiscoverStatus(input, {
       config: deps.config,
       logger: deps.logger,
+      firestore: deps.firestore,
       runDiscoverStatus: deps.runDiscoverStatus,
     })
     if (result.isErr()) {
@@ -453,6 +464,7 @@ export function createDiscoverResultToolCallback(
     const result = await handleComplianceDiscoverResult(input, {
       config: deps.config,
       logger: deps.logger,
+      firestore: deps.firestore,
       runDiscoverResult: deps.runDiscoverResult,
     })
     if (result.isErr()) {
