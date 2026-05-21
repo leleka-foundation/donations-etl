@@ -59,6 +59,7 @@ import {
   type RecordEvidenceError,
   type RecordEvidenceRunner,
 } from './record-evidence'
+import { renderComplianceStatusMarkdown } from './render-status'
 import {
   COMPLIANCE_INTERVIEW_QUESTIONS_URI,
   COMPLIANCE_MANUAL_EVIDENCE_URI_TEMPLATE,
@@ -148,13 +149,23 @@ export function createStatusToolCallback(
         isError: true,
       }
     }
+    // Primary content is a server-rendered Markdown narrative the
+    // model can emit verbatim. The structured JSON is preserved in
+    // `structuredContent` for any client that wants to render it
+    // differently, and as a second text block (wrapped in <details>)
+    // so it stays out of the user's main view but is still visible to
+    // the model if it needs to dig.
+    const markdown = renderComplianceStatusMarkdown(result.value)
+    const serialised = serialiseStatus(result.value)
     return {
       content: [
+        { type: 'text', text: markdown },
         {
           type: 'text',
-          text: JSON.stringify(serialiseStatus(result.value), null, 2),
+          text: `<details><summary>Raw compliance data (for reference)</summary>\n\n\`\`\`json\n${JSON.stringify(serialised, null, 2)}\n\`\`\`\n\n</details>`,
         },
       ],
+      structuredContent: serialised,
     }
   }
 }

@@ -124,7 +124,16 @@ describe('createStatusToolCallback', () => {
     })
     const result = await cb()
     expect(result.isError).toBeUndefined()
-    expect(parseFirstToolJson(result)).toMatchObject({ overall: 'clear' })
+    // First text block is the server-rendered Markdown narrative the
+    // model emits to the user. Structured JSON is preserved on
+    // structuredContent.
+    const first = result.content[0]
+    expect(first?.type).toBe('text')
+    if (first?.type === 'text') {
+      expect(first.text).toContain('# Compliance Status:')
+      expect(first.text).toContain('Clear')
+    }
+    expect(result.structuredContent).toMatchObject({ overall: 'clear' })
   })
 
   it('returns an error result when the reader fails', async () => {
