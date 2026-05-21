@@ -11,6 +11,7 @@ COPY packages/connectors/package.json packages/connectors/
 RUN bun install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/mcp/ apps/mcp/
+COPY src/ src/
 RUN bun build apps/mcp/src/main.ts --outdir dist --target bun \
     --external playwright --external playwright-core \
     --external express --external @google-cloud/firestore \
