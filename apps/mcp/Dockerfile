@@ -16,6 +16,7 @@ RUN bun build apps/mcp/src/main.ts --outdir dist --target bun \
     --external playwright --external playwright-core \
     --external express --external @google-cloud/firestore \
     --external @google-cloud/bigquery --external @google-cloud/storage \
+    --external @google-cloud/secret-manager \
     --external @modelcontextprotocol/sdk
 
 FROM oven/bun:1
