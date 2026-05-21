@@ -1,0 +1,240 @@
+/**
+ * Tests for the compliance MCP registration callbacks.
+ *
+ * Each callback exported from `tools/compliance/index.ts` is exercised
+ * directly so the registration code paths get covered without driving
+ * the MCP transport. A separate test boots a real `McpServer` and
+ * confirms registration succeeds + duplicates are rejected.
+ */
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { errAsync, okAsync } from 'neverthrow'
+import pino from 'pino'
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
+import type { Config } from '../../src/config'
+import {
+  createStatusResourceCallback,
+  createStatusToolCallback,
+  interviewQuestionsResourceCallback,
+  manualEvidenceTemplateCallback,
+  registerComplianceSurface,
+  sourceRegistryResourceCallback,
+} from '../../src/tools/compliance/index'
+import { parseFirstResourceJson, parseFirstToolJson } from './test-utils'
+
+const testConfig: Config = {
+  PORT: 8080,
+  LOG_LEVEL: 'info' as const,
+  PROJECT_ID: 'test-project',
+  DATASET_CANON: 'donations',
+  GOOGLE_CLIENT_ID: 'test-client-id',
+  BASE_URL: 'https://mcp.example.com',
+  GOOGLE_CLIENT_SECRET: 'test-secret',
+  MCP_ALLOWED_DOMAIN: 'example.com',
+  ORG_NAME: 'Test Org',
+  ORG_ADDRESS: '123 Main St',
+  ORG_MISSION: 'Test mission',
+  ORG_TAX_STATUS: 'Test tax status',
+  DEFAULT_SIGNER_NAME: 'Jane Doe',
+  DEFAULT_SIGNER_TITLE: 'President',
+}
+
+const STUB_REPORT: ComplianceStatusReport = {
+  entity: {
+    legal_name: 'Foo',
+    state_of_incorporation: 'CA',
+    fiscal_year_end_month: 12,
+    fiscal_year_end_day: 31,
+    formation_date: '2010-01-15',
+    mailing_address_line1: '1 Mission St',
+    mailing_address_line2: null,
+    mailing_address_city: 'San Francisco',
+    mailing_address_region: 'CA',
+    mailing_address_postal_code: '94105',
+    mailing_address_country: 'US',
+    updated_at: '2024-05-01T00:00:00Z',
+  },
+  identifiers: {
+    'us-federal': { ein: '12-3456789' },
+    'us-ca': { sosEntityNumber: 'C0123456' },
+  },
+  latestRuns: [],
+  openFindings: [],
+  overall: 'clear',
+}
+
+const logger = pino({ level: 'silent' })
+
+describe('createStatusToolCallback', () => {
+  it('returns the serialised status JSON on success', async () => {
+    const cb = createStatusToolCallback({
+      config: testConfig,
+      logger,
+      readStatus: () => okAsync(STUB_REPORT),
+    })
+    const result = await cb()
+    expect(result.isError).toBeUndefined()
+    expect(parseFirstToolJson(result)).toMatchObject({ overall: 'clear' })
+  })
+
+  it('returns an error result when the reader fails', async () => {
+    const cb = createStatusToolCallback({
+      config: testConfig,
+      logger,
+      readStatus: () =>
+        errAsync({
+          type: 'not_onboarded' as const,
+          message: 'onboard first',
+        }),
+    })
+    const result = await cb()
+    expect(result.isError).toBe(true)
+    const first = result.content[0]
+    expect(first?.type).toBe('text')
+    if (first?.type === 'text') {
+      expect(first.text).toContain('not_onboarded')
+    }
+  })
+})
+
+describe('createStatusResourceCallback', () => {
+  it('returns the status JSON when the reader succeeds', async () => {
+    const cb = createStatusResourceCallback({
+      config: testConfig,
+      logger,
+      readStatus: () => okAsync(STUB_REPORT),
+    })
+    const result = await cb()
+    expect(parseFirstResourceJson(result)).toMatchObject({
+      overall: 'clear',
+    })
+  })
+
+  it('returns a structured error payload when the reader fails', async () => {
+    const cb = createStatusResourceCallback({
+      config: testConfig,
+      logger,
+      readStatus: () =>
+        errAsync({
+          type: 'load' as const,
+          message: 'BQ down',
+        }),
+    })
+    const result = await cb()
+    const ErrorBodySchema = z.object({
+      error: z.object({ type: z.string(), message: z.string() }),
+    })
+    const body = ErrorBodySchema.parse(parseFirstResourceJson(result))
+    expect(body.error.type).toBe('load')
+    expect(body.error.message).toContain('BQ down')
+  })
+})
+
+describe('sourceRegistryResourceCallback', () => {
+  it('returns the source-registry payload', () => {
+    const result = sourceRegistryResourceCallback()
+    const body = parseFirstResourceJson(result)
+    expect(Array.isArray(body.sources)).toBe(true)
+  })
+})
+
+describe('interviewQuestionsResourceCallback', () => {
+  it('returns the interview-questions payload', () => {
+    const result = interviewQuestionsResourceCallback()
+    const body = parseFirstResourceJson(result)
+    expect(Array.isArray(body.questions)).toBe(true)
+  })
+})
+
+describe('manualEvidenceTemplateCallback', () => {
+  const exampleUri = new URL(
+    'compliance://sources/example/manual-evidence-instructions',
+  )
+
+  it('returns a missing_source_id error when the variable is empty', () => {
+    const out = manualEvidenceTemplateCallback(exampleUri, { sourceId: '' })
+    expect(parseFirstResourceJson(out)).toMatchObject({
+      error: 'missing_source_id',
+    })
+  })
+
+  it('returns a missing_source_id error when the variable is an empty array', () => {
+    const out = manualEvidenceTemplateCallback(exampleUri, {
+      sourceId: ['', ''],
+    })
+    expect(parseFirstResourceJson(out)).toMatchObject({
+      error: 'missing_source_id',
+    })
+  })
+
+  it('returns an unknown_source error for an unregistered source id', () => {
+    const out = manualEvidenceTemplateCallback(exampleUri, {
+      sourceId: 'never-existed',
+    })
+    expect(parseFirstResourceJson(out)).toMatchObject({
+      error: 'unknown_source',
+      sourceId: 'never-existed',
+    })
+  })
+
+  it('returns the source detail for a registered source', () => {
+    const out = manualEvidenceTemplateCallback(exampleUri, {
+      sourceId: 'irs-eo-bmf',
+    })
+    expect(parseFirstResourceJson(out)).toMatchObject({
+      sourceId: 'irs-eo-bmf',
+    })
+  })
+
+  it('unwraps an array-valued sourceId by taking the first element', () => {
+    const out = manualEvidenceTemplateCallback(exampleUri, {
+      sourceId: ['irs-eo-bmf', 'extra-ignored'],
+    })
+    expect(parseFirstResourceJson(out)).toMatchObject({
+      sourceId: 'irs-eo-bmf',
+    })
+  })
+})
+
+describe('registerComplianceSurface', () => {
+  function buildServer(): McpServer {
+    const mcp = new McpServer(
+      { name: 'test', version: '0.0.0' },
+      { capabilities: { tools: {}, resources: {}, prompts: {} } },
+    )
+    registerComplianceSurface(mcp, {
+      config: testConfig,
+      logger,
+      readStatus: () => okAsync(STUB_REPORT),
+    })
+    return mcp
+  }
+
+  it('registers without throwing', () => {
+    expect(buildServer()).toBeDefined()
+  })
+
+  it('accepts deps with no readStatus override (defaults to production wiring)', () => {
+    const mcp = new McpServer(
+      { name: 'test', version: '0.0.0' },
+      { capabilities: { tools: {}, resources: {}, prompts: {} } },
+    )
+    expect(() =>
+      registerComplianceSurface(mcp, {
+        config: testConfig,
+        logger,
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects duplicate registration on the same server', () => {
+    const mcp = buildServer()
+    expect(() =>
+      registerComplianceSurface(mcp, {
+        config: testConfig,
+        logger,
+      }),
+    ).toThrow()
+  })
+})
