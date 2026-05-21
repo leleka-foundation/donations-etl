@@ -312,6 +312,29 @@ export const ComplianceEntityRowSchema = EntitySchema
 export type ComplianceEntityRow = z.infer<typeof ComplianceEntityRowSchema>
 
 /**
+ * BigQuery returns JSON columns as JSON-encoded strings, not parsed
+ * objects. Preprocess: if we see a string, parse it; otherwise pass
+ * through. Strings that fail to parse are returned as-is so the
+ * downstream Zod check produces a clear "expected X, received
+ * string" error rather than a silent corruption.
+ *
+ * Used on:
+ *   - ComplianceDiscoveryRunRowSchema.payload
+ *   - ComplianceDiscoveryJobRowSchema.requested_sources
+ *   - ComplianceDiscoveryJobRowSchema.result
+ */
+const parseJsonColumn = (val: unknown): unknown => {
+  if (typeof val !== 'string') {
+    return val
+  }
+  try {
+    return JSON.parse(val)
+  } catch {
+    return val
+  }
+}
+
+/**
  * Row schema for the `discovery_runs` table.
  *
  * `payload` is `unknown` — sources can persist any JSON shape — but it must
@@ -329,7 +352,11 @@ export const ComplianceDiscoveryRunRowSchema = z.object({
   duration_ms: z.coerce.number().int().nonnegative(),
   error_type: z.string().nullable(),
   error_message: z.string().nullable(),
-  payload: z.unknown().nullable(),
+  // Stored as a BigQuery JSON column; BQ returns it as a JSON-encoded
+  // string. parseJsonColumn (defined above) parses it back into a JS
+  // value so callers like compliance-status / discover-result get an
+  // object rather than a "{...stringified blob...}" they can't index.
+  payload: z.preprocess(parseJsonColumn, z.unknown().nullable()),
   // Async-job parent linkage. Null for runs that were not part of an
   // async compliance-discover job (legacy rows, or future synchronous
   // callers). Set to the discovery_jobs.job_id otherwise.
@@ -389,23 +416,6 @@ export type ComplianceSourceRow = z.infer<typeof ComplianceSourceRowSchema>
  * means "every source registered for the active jurisdictions".
  * `requested_jurisdiction` is an optional single-jurisdiction filter.
  */
-/**
- * BigQuery returns JSON columns as JSON-encoded strings, not parsed
- * objects. Preprocess: if we see a string, parse it; otherwise pass
- * through. Strings that fail to parse are returned as-is so the
- * downstream Zod check produces a clear "expected array, received
- * string" error rather than a silent corruption.
- */
-const parseJsonColumn = (val: unknown): unknown => {
-  if (typeof val !== 'string') {
-    return val
-  }
-  try {
-    return JSON.parse(val)
-  } catch {
-    return val
-  }
-}
 
 export const ComplianceDiscoveryJobRowSchema = z.object({
   job_id: z.string().uuid(),

@@ -219,6 +219,31 @@ describe('ComplianceDiscoveryRunRowSchema', () => {
     expect(parsed.started_at).toBe('2024-01-01T00:00:00.000Z')
   })
 
+  it('parses payload when BigQuery returns it as a JSON-encoded string', () => {
+    // BQ's JSON column type round-trips as a string in the nodejs SDK
+    // — discovery_runs.payload is JSON, so the schema's preprocess
+    // parses it before downstream consumers (compliance-status,
+    // discover-result, source-specific finding derivation) try to
+    // index into it.
+    const parsed = ComplianceDiscoveryRunRowSchema.parse({
+      ...valid,
+      payload:
+        '{"matchStatus":"found","detailUrl":"https://example.gov/detail/abc"}',
+    })
+    expect(parsed.payload).toEqual({
+      matchStatus: 'found',
+      detailUrl: 'https://example.gov/detail/abc',
+    })
+  })
+
+  it('passes a payload object through unchanged when it is already parsed', () => {
+    const parsed = ComplianceDiscoveryRunRowSchema.parse({
+      ...valid,
+      payload: { matchStatus: 'found' },
+    })
+    expect(parsed.payload).toEqual({ matchStatus: 'found' })
+  })
+
   it('rejects an empty source_id', () => {
     expect(() =>
       ComplianceDiscoveryRunRowSchema.parse({ ...valid, source_id: '' }),
