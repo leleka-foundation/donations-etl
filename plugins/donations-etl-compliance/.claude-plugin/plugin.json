@@ -1,0 +1,9 @@
+{
+  "name": "donations-etl-compliance",
+  "displayName": "Donations ETL (compliance)",
+  "version": "0.1.0",
+  "description": "Compliance toolkit skills for the donations ETL project: federal + California entity onboarding, current-state checks, and IRS / CA AG / CA SOS / CA FTB / CDTFA discovery. Registers the donations-etl remote MCP server via .mcp.json.",
+  "license": "MIT",
+  "repository": "https://github.com/vgeshel/donations-etl",
+  "keywords": ["nonprofit", "compliance", "irs", "california", "mcp"]
+}

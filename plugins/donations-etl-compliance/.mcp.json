@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "donations-etl": {
+      "type": "http",
+      "url": "https://your-mcp-server.example.com/mcp"
+    }
+  }
+}

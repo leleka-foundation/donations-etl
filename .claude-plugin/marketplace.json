@@ -1,0 +1,23 @@
+{
+  "name": "donations-etl",
+  "owner": {
+    "name": "vgeshel",
+    "url": "https://github.com/vgeshel/donations-etl"
+  },
+  "metadata": {
+    "description": "Donations ETL toolkit for US nonprofits — payment-platform sync, donor letters, BigQuery analytics, and federal/California compliance discovery.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "donations-etl-core",
+      "source": "./plugins/donations-etl-core",
+      "description": "Core donations ETL skills: payment-platform sync, donor letters, BigQuery analytics, deploys, and bootstrap."
+    },
+    {
+      "name": "donations-etl-compliance",
+      "source": "./plugins/donations-etl-compliance",
+      "description": "Compliance toolkit skills: onboarding, status, and IRS / California discovery."
+    }
+  ]
+}
