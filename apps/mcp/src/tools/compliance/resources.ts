@@ -20,8 +20,8 @@ import type { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js'
 import { usCaJurisdiction } from '../../../../../src/compliance/jurisdictions/us-ca/index.ts'
 import { usFederalJurisdiction } from '../../../../../src/compliance/jurisdictions/us-federal/index.ts'
 import { ONBOARD_INTERVIEW_QUESTIONS } from '../../../../../src/compliance/skills/onboard.ts'
-import type { ComplianceStatusReport } from '../../../../../src/compliance/skills/status.ts'
 import type { Jurisdiction } from '../../../../../src/compliance/types/index.ts'
+import type { EnrichedComplianceStatusReport } from './status'
 
 /**
  * Resource URIs. Exported as constants so tests and registration code
@@ -55,7 +55,7 @@ export const DEFAULT_JURISDICTIONS: readonly Jurisdiction[] = [
  * this; we serialise it as JSON for the host model.
  */
 export function buildStatusResource(
-  report: ComplianceStatusReport,
+  report: EnrichedComplianceStatusReport,
 ): ResourceReadResult {
   return {
     contents: [
@@ -69,19 +69,23 @@ export function buildStatusResource(
 }
 
 /**
- * Project a `ComplianceStatusReport` into a JSON-safe shape. Exported so
- * the status tool can return the same shape and so tests can validate
- * without serialising/parsing.
+ * Project an `EnrichedComplianceStatusReport` into a JSON-safe shape.
+ * Includes `now` (server timestamp) and `sources` (per-source URL +
+ * auth metadata) so the host LLM has everything it needs to render a
+ * linked, date-aware status narrative without making additional MCP
+ * calls.
  */
 export function serialiseStatus(
-  report: ComplianceStatusReport,
+  report: EnrichedComplianceStatusReport,
 ): Record<string, unknown> {
   return {
     overall: report.overall,
+    now: report.now,
     entity: report.entity,
     identifiers: report.identifiers,
     latestRuns: report.latestRuns,
     openFindings: report.openFindings,
+    sources: report.sources,
   }
 }
 

@@ -98,9 +98,39 @@ Today's date is ${today}.
 
 ## Reporting style
 
-When you write a status narrative for the user:
+When you write a status narrative for the user it must be *actionable*. A status report without links and concrete next steps is a bug — fix it before sending.
 
-- **Refer to each source by its \`source_id\` and \`agency\` name from the source registry, not by an abbreviation alone.** California has at least four separate state agencies in this toolkit — the Franchise Tax Board (FTB), Attorney General's Registry of Charitable Trusts (AG), Secretary of State (SOS), and Department of Tax and Fee Administration (CDTFA). They are not interchangeable: an \`auth_required\` finding for \`ca-ftb-myftb\` and one for \`ca-ag-online-filing\` are at *different* portals run by *different* agencies.
-- Do not group findings from different agencies into a single sentence like "both checks need login" — name each agency separately so the user knows which portal to open. The \`compliance://sources/registry\` resource carries the \`agency\` field for every source; use it.
-- When you cite a finding, include the \`source_id\` so the user can trace it back to a specific source.`
+### Use the data the tool already gives you
+
+The \`compliance-status\` tool returns these fields. Use them, don't ignore them:
+
+- **\`now\`** — server-known current ISO timestamp. **Always use this as "today"** when computing whether a deadline is upcoming or overdue. Do not use your training-cutoff date.
+- **\`sources\`** — for every registered source, an object with \`sourceId\`, \`agency\`, \`accessUrl\`, \`tosUrl\`, and (for auth-required sources) \`auth.loginUrl\` + \`auth.instructions\` + \`auth.evidenceFields\`.
+- **\`latestRuns[].payload\`** — for any source whose payload carries a per-entity link (e.g. \`ca-ag-registry.payload.detailUrl\`), use that as the primary link to the entity's record, not the generic accessUrl.
+
+### Linking rules (mandatory)
+
+- Every source you mention gets at least one link. Use the most specific URL available:
+  1. \`latestRuns[…].payload.detailUrl\` (entity-specific record page) — most specific, prefer this.
+  2. \`sources[…].accessUrl\` (the source's search/lookup landing page) — fallback.
+- For an \`auth_required\` source, render the \`sources[…].auth.loginUrl\` as a clickable link labelled "Sign in to {agency} {portal name}" and inline 1–2 of the \`auth.instructions\` bullets so the user knows what to do once they're in.
+- Never write a source name without an accompanying link.
+
+### Date math (mandatory)
+
+- Whenever you cite a date (renewal due, filing accepted, last checked, etc.), compute relative time against the response's \`now\` field and state it explicitly: "due in N days", "overdue by N days", "checked N hours ago". A bare date like "due 5/15/2026" is not enough.
+- Sort action items by urgency: overdue first, then upcoming, then optional.
+
+### Action items
+
+End the report with an "Action items" section. Each item must include:
+
+1. **What to do** in a single imperative sentence.
+2. **Why** in plain language (the finding + the consequence).
+3. **A link** (preferring the per-entity detailUrl when available, otherwise the source accessUrl, plus an auth loginUrl when relevant).
+4. If the user has to authenticate and paste evidence, name the exact MCP tool to call afterwards (\`compliance-record-evidence\`) and the \`sourceId\` to pass.
+
+### Agency disambiguation
+
+California has at least four separate state agencies in this toolkit — Franchise Tax Board (FTB), Attorney General's Registry of Charitable Trusts (AG), Secretary of State (SOS), and Department of Tax and Fee Administration (CDTFA). Refer to each source by its \`sourceId\` AND its \`sources[…].agency\` name. Never group findings from different agencies into one sentence — name each agency separately so the user knows which portal to open.`
 }

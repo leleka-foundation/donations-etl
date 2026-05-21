@@ -74,4 +74,20 @@ describe('buildComplianceOverviewPrompt', () => {
     const out = buildComplianceOverviewPrompt(testConfig)
     expect(out).toContain('confirm: true')
   })
+
+  it('requires the model to link sources and compute date math against `now`', () => {
+    const out = buildComplianceOverviewPrompt(testConfig)
+    // Linking requirement
+    expect(out).toMatch(/link/i)
+    expect(out).toContain('detailUrl')
+    expect(out).toContain('accessUrl')
+    expect(out).toContain('loginUrl')
+    // Date math requirement
+    expect(out).toContain('`now`')
+    expect(out).toMatch(/overdue|due in/i)
+    // Action-items section requirement
+    expect(out).toMatch(/[Aa]ction items/)
+    // Auth-required follow-up
+    expect(out).toContain('compliance-record-evidence')
+  })
 })

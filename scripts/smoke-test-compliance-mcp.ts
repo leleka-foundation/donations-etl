@@ -254,13 +254,49 @@ async function main(): Promise<void> {
     const statusBody = z
       .object({
         overall: z.enum(['clear', 'attention_required', 'unknown']),
+        now: z.string().min(1),
         entity: z.object({ legal_name: z.string() }).loose(),
         identifiers: z.record(z.string(), z.unknown()),
+        sources: z
+          .array(
+            z.object({
+              sourceId: z.string(),
+              agency: z.string(),
+              accessUrl: z.string().url(),
+              tosUrl: z.string().url(),
+              automationAllowed: z.boolean(),
+              auth: z
+                .object({
+                  loginUrl: z.string().url(),
+                  instructions: z.array(z.string()).min(1),
+                })
+                .loose()
+                .optional(),
+            }),
+          )
+          .min(1),
       })
       .parse(JSON.parse(statusResult.content[0]?.text ?? '{}'))
+    // Verify the enrichment landed: every source has a URL, at least
+    // one source carries auth metadata, and `now` is the current ISO.
+    const nowParsed = new Date(statusBody.now)
+    const drift = Math.abs(nowParsed.getTime() - Date.now())
+    if (drift > 60_000) {
+      fail(
+        'compliance-status',
+        `now drift ${String(drift)}ms — server clock skew?`,
+      )
+    }
+    const withAuth = statusBody.sources.filter((s) => s.auth !== undefined)
+    if (withAuth.length === 0) {
+      fail(
+        'compliance-status',
+        'expected at least one source to carry auth metadata',
+      )
+    }
     ok(
       'compliance-status',
-      `overall=${statusBody.overall}, entity.legal_name=${statusBody.entity.legal_name}`,
+      `overall=${statusBody.overall}, entity=${statusBody.entity.legal_name}, sources=${String(statusBody.sources.length)}, withAuth=${String(withAuth.length)}, now-drift=${String(drift)}ms`,
     )
 
     console.log(`\n\x1b[36m▶\x1b[0m resources/read compliance://status`)

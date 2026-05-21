@@ -9,6 +9,7 @@ import type { Config } from '../../src/config'
 import {
   defaultComplianceStatusReader,
   handleComplianceStatus,
+  projectSourceMetadata,
   resolveStatusReader,
 } from '../../src/tools/compliance/status'
 
@@ -70,6 +71,35 @@ describe('handleComplianceStatus', () => {
     expect(reader).toHaveBeenCalledWith('test-project')
   })
 
+  it('enriches the response with `now` and `sources` metadata', async () => {
+    const reader = vi.fn(() => okAsync(STUB_REPORT))
+    const result = await handleComplianceStatus({
+      config: testConfig,
+      logger: mockLogger,
+      readStatus: reader,
+    })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    // ISO-8601 timestamp matching the server clock.
+    expect(result.value.now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+    // sources includes every registered source, each with the URLs
+    // the LLM needs to render a linkable narrative.
+    expect(result.value.sources.length).toBeGreaterThan(0)
+    for (const meta of result.value.sources) {
+      expect(meta.sourceId).toMatch(/^[a-z0-9-]+$/)
+      expect(meta.agency.length).toBeGreaterThan(0)
+      expect(meta.accessUrl).toMatch(/^https?:\/\//)
+    }
+    // At least one source carries auth metadata (the user-assisted-
+    // authenticated portals) so the LLM can link to the login page.
+    const withAuth = result.value.sources.filter((s) => s.auth !== undefined)
+    expect(withAuth.length).toBeGreaterThan(0)
+    for (const s of withAuth) {
+      expect(s.auth?.loginUrl).toMatch(/^https?:\/\//)
+      expect(s.auth?.instructions.length).toBeGreaterThan(0)
+    }
+  })
+
   it('surfaces a not_onboarded error from the reader', async () => {
     const reader = vi.fn(() =>
       errAsync({
@@ -116,6 +146,35 @@ describe('defaultComplianceStatusReader', () => {
     expect(typeof defaultComplianceStatusReader).toBe('function')
     const out = defaultComplianceStatusReader('test-project')
     expect(typeof out.match).toBe('function')
+  })
+})
+
+describe('projectSourceMetadata', () => {
+  it('returns one entry per registered source with at least the required URLs', () => {
+    const items = projectSourceMetadata()
+    expect(items.length).toBeGreaterThan(0)
+    const ids = new Set(items.map((i) => i.sourceId))
+    // sanity-check that the expected core sources are projected
+    expect(ids).toContain('irs-teos')
+    expect(ids).toContain('ca-sos-bizfile')
+    expect(ids).toContain('ca-ag-registry')
+    expect(ids).toContain('ca-ftb-myftb')
+    for (const item of items) {
+      expect(item.accessUrl).toMatch(/^https?:\/\//)
+      expect(item.tosUrl).toMatch(/^https?:\/\//)
+    }
+  })
+
+  it('includes auth metadata only for sources that declare an auth requirement', () => {
+    const items = projectSourceMetadata()
+    const ftbMyFtb = items.find((i) => i.sourceId === 'ca-ftb-myftb')
+    expect(ftbMyFtb?.auth?.loginUrl).toMatch(/^https?:\/\//)
+    const irsTeos = items.find((i) => i.sourceId === 'irs-teos')
+    expect(irsTeos?.auth).toBeUndefined()
+  })
+
+  it('returns an empty list when no jurisdictions are supplied', () => {
+    expect(projectSourceMetadata([])).toEqual([])
   })
 })
 

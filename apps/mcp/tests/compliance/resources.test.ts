@@ -7,7 +7,6 @@
 import { errAsync } from 'neverthrow'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import type { ComplianceStatusReport } from '../../../../src/compliance/skills/status.ts'
 import type {
   Entity,
   Jurisdiction,
@@ -23,9 +22,12 @@ import {
   buildStatusResource,
   serialiseStatus,
 } from '../../src/tools/compliance/resources'
+import type { EnrichedComplianceStatusReport } from '../../src/tools/compliance/status'
 import { parseFirstResourceJson } from './test-utils'
 
-const STUB_REPORT: ComplianceStatusReport = {
+const STUB_REPORT: EnrichedComplianceStatusReport = {
+  now: '2026-05-21T12:00:00.000Z',
+  sources: [],
   entity: {
     legal_name: 'Foo Foundation',
     state_of_incorporation: 'CA',
