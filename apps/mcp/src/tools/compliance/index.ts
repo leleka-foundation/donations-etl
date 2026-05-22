@@ -69,7 +69,6 @@ import {
   buildManualEvidenceInstructionsResource,
   buildSourceRegistryResource,
   buildStatusResource,
-  serialiseStatus,
 } from './resources'
 import { handleComplianceStatus, type ComplianceStatusReader } from './status'
 
@@ -149,23 +148,22 @@ export function createStatusToolCallback(
         isError: true,
       }
     }
-    // Primary content is a server-rendered Markdown narrative the
-    // model can emit verbatim. The structured JSON is preserved in
-    // `structuredContent` for any client that wants to render it
-    // differently, and as a second text block (wrapped in <details>)
-    // so it stays out of the user's main view but is still visible to
-    // the model if it needs to dig.
+    // Return ONLY the server-rendered Markdown report. We previously
+    // also returned the raw JSON (in a second text block + as
+    // structuredContent) on the theory the model could "use the
+    // structured data and paraphrase". In practice the model would
+    // pluck a few fields from the JSON, ignore the rendered Markdown's
+    // links + computed dates, and produce an unlinked narrative with
+    // wrong date math ("due this week" when the renderer had already
+    // computed "Overdue by 7 days"). With only the Markdown in the
+    // content array, the model has nothing else to splice from and
+    // tends to emit the report verbatim.
+    //
+    // The JSON shape is still available via the compliance://status
+    // resource for programmatic clients that need structured access.
     const markdown = renderComplianceStatusMarkdown(result.value)
-    const serialised = serialiseStatus(result.value)
     return {
-      content: [
-        { type: 'text', text: markdown },
-        {
-          type: 'text',
-          text: `<details><summary>Raw compliance data (for reference)</summary>\n\n\`\`\`json\n${JSON.stringify(serialised, null, 2)}\n\`\`\`\n\n</details>`,
-        },
-      ],
-      structuredContent: serialised,
+      content: [{ type: 'text', text: markdown }],
     }
   }
 }

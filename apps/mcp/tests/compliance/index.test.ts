@@ -124,16 +124,18 @@ describe('createStatusToolCallback', () => {
     })
     const result = await cb()
     expect(result.isError).toBeUndefined()
-    // First text block is the server-rendered Markdown narrative the
-    // model emits to the user. Structured JSON is preserved on
-    // structuredContent.
+    // The tool returns exactly ONE content block — the server-
+    // rendered Markdown narrative. Returning a second JSON block
+    // gave the host model two things to splice between and produced
+    // unlinked, date-wrong narratives in practice.
+    expect(result.content.length).toBe(1)
     const first = result.content[0]
     expect(first?.type).toBe('text')
     if (first?.type === 'text') {
       expect(first.text).toContain('# Compliance Status:')
       expect(first.text).toContain('Clear')
     }
-    expect(result.structuredContent).toMatchObject({ overall: 'clear' })
+    expect(result.structuredContent).toBeUndefined()
   })
 
   it('returns an error result when the reader fails', async () => {
