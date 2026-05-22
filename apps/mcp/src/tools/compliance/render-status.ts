@@ -396,9 +396,25 @@ function renderPayloadSummary(
 }
 
 /**
- * Render one per-source row in the results table. Includes the
- * source's emoji status, agency, primary link, and (for auth-required
- * sources) a sign-in link + 1-2 instruction bullets.
+ * Render one per-source row in the results table.
+ *
+ * Format constraints (learned from observing what survives client-side
+ * paraphrasing in claude.ai-class clients):
+ *
+ * - **The agency name itself IS the markdown link.** A trailing
+ *   `— [source-id](url)` tag gets stripped because the model
+ *   classifies it as a technical artifact secondary to the agency
+ *   name. Wrapping the agency name in the link forces the model to
+ *   either keep the link or drop the agency name entirely.
+ * - **One-line summaries survive; multi-bullet sub-lists do not.**
+ *   The model compresses sub-bullets into one summary line and
+ *   picks whichever bullet it considers most representative, dropping
+ *   the rest. We previously saw the FTB "Exempt status: NOT EXEMPT"
+ *   being dropped while "Entity status: ACTIVE" survived. Inline
+ *   everything separated by ` · ` so the model can't drop half.
+ * - **Auth-required: collapse to one line with the loginUrl + first
+ *   instruction.** Multi-line "Authentication required" blocks were
+ *   getting compressed too. A single line with the link survives.
  */
 function renderSourceRow(
   run: EnrichedComplianceStatusReport['latestRuns'][number],
@@ -409,31 +425,30 @@ function renderSourceRow(
   const tag = STATUS_TAG[run.status]
   const agency = meta?.agency ?? '(unknown agency)'
   const link = pickPrimaryLink(meta)
-  const linkText = link === undefined ? '' : ` — [${run.source_id}](${link})`
+  const heading =
+    link === undefined
+      ? `**${agency}** (${run.source_id})`
+      : `[**${agency}**](${link}) (${run.source_id})`
+  const summary = renderPayloadSummary(run.source_id, run.payload, now).join(
+    ' · ',
+  )
+  const summaryInline = summary === '' ? '' : ` — ${summary}`
   const checked = renderRelativeDate(run.completed_at, now)
-  const summaryBullets = renderPayloadSummary(run.source_id, run.payload, now)
-    .map((line) => `   - ${line}`)
-    .join('\n')
-  const summaryBlock = summaryBullets === '' ? '' : `\n${summaryBullets}`
   const failureSummary = (() => {
     if (run.status !== 'failed') return ''
     if (run.error_type === 'auth_required') {
-      // surfaces the loginUrl + first 2 instruction bullets so the
-      // user knows exactly where to sign in and what to do once in.
       const auth = meta?.auth
       if (auth === undefined) return ' — auth required'
-      const instructions = auth.instructions
-        .slice(0, 2)
-        .map((i) => `      - ${i}`)
-        .join('\n')
-      return `\n   - 🔐 **Authentication required.** Sign in: [${agency}](${auth.loginUrl})\n${instructions}\n      - Then run \`compliance-record-evidence\` with \`sourceId: ${run.source_id}\` to upload what you see.`
+      const firstInstruction =
+        auth.instructions[0] ?? 'Sign in and complete MFA.'
+      return ` — 🔐 sign in at [${auth.loginUrl}](${auth.loginUrl}). ${firstInstruction} Then run \`compliance-record-evidence\` with \`sourceId: ${run.source_id}\`.`
     }
     const errType = run.error_type ?? 'failed'
     const errMsg =
       run.error_message === null ? '' : `: ${run.error_message.slice(0, 200)}`
     return ` — ❌ ${errType}${errMsg}`
   })()
-  return `- ${tag} **${agency}**${linkText}${failureSummary}${summaryBlock}\n   - _checked ${checked}_`
+  return `- ${tag} ${heading}${summaryInline}${failureSummary} _(checked ${checked})_`
 }
 
 /**
@@ -445,12 +460,15 @@ function renderFinding(
   sources: ReadonlyMap<string, ComplianceStatusSourceMeta>,
 ): string {
   const meta = sources.get(finding.source_id)
-  const link =
-    meta === undefined
-      ? finding.source_id
-      : `[${finding.source_id}](${meta.accessUrl})`
   const emoji = SEVERITY_EMOJI[finding.severity]
-  return `- ${emoji} **${finding.title}** (${link})\n   - ${finding.detail}`
+  // Wrap the title in the link (same pattern as source rows) so
+  // client-side paraphrasers keep the link. Detail stays inline on
+  // the same line — multi-line sub-bullets get compressed.
+  const titleAndLink =
+    meta === undefined
+      ? `**${finding.title}**`
+      : `[**${finding.title}**](${meta.accessUrl})`
+  return `- ${emoji} ${titleAndLink} (${finding.source_id}) — ${finding.detail}`
 }
 
 /**
@@ -492,36 +510,31 @@ function deriveActionItems(
     )
     const meta = sources.get(run.source_id)
     const link = pickPrimaryLink(meta)
-    // The accessUrl points at the search/lookup page (not the per-
-    // entity detail page, which is session-bound). If the source's
-    // payload carries a stable per-entity identifier (e.g. AG RCT
-    // number), include it inline so the user can paste it into the
-    // search.
-    const idHint = (() => {
-      if (
-        run.source_id === 'ca-ag-registry' &&
-        'stateCharityRegistrationNumber' in p &&
-        typeof p.stateCharityRegistrationNumber === 'string'
-      ) {
-        return ` (search by RCT #${p.stateCharityRegistrationNumber})`
-      }
-      return ''
-    })()
-    // link is defined iff meta is defined (pickPrimaryLink returns
-    // meta?.accessUrl); collapsing the two undefined checks into one.
-    const linkLine =
-      meta === undefined || link === undefined
-        ? ''
-        : ` [Open ${meta.agency}](${link})${idHint}`
+    // Per-entity identifier hint — appears in the link text so the
+    // model can't strip it without dropping the link.
+    const idHint =
+      run.source_id === 'ca-ag-registry' &&
+      'stateCharityRegistrationNumber' in p &&
+      typeof p.stateCharityRegistrationNumber === 'string'
+        ? ` (RCT #${p.stateCharityRegistrationNumber})`
+        : ''
+    const agency = meta?.agency ?? run.source_id
+    // Make the renewal action itself the link. The model strips
+    // trailing "[Open X](url)" tags as decorative; making the verb
+    // phrase the link keeps it.
+    const renewLink =
+      link === undefined
+        ? `Renew ${agency} registration${idHint}`
+        : `[Renew ${agency} registration${idHint}](${link})`
     if (diffDays < 0) {
       items.push({
         urgency: -diffDays * -1, // most overdue → most urgent
-        text: `**[Overdue by ${String(-diffDays)} days]** Renew ${meta?.agency ?? run.source_id} registration. Renewal was due ${due} (today is ${now.toFormat('yyyy-LL-dd')}).${linkLine}`,
+        text: `**🚨 Overdue by ${String(-diffDays)} days** — ${renewLink}. Was due ${due} (today is ${now.toFormat('yyyy-LL-dd')}).`,
       })
     } else if (diffDays <= 60) {
       items.push({
         urgency: 1000 + diffDays,
-        text: `**[Due in ${String(diffDays)} days]** Renew ${meta?.agency ?? run.source_id} registration before ${due}.${linkLine}`,
+        text: `**Due in ${String(diffDays)} days** — ${renewLink}. Due ${due}.`,
       })
     }
   }
@@ -533,25 +546,29 @@ function deriveActionItems(
     const isAuthRequired = finding.evidence?.code === 'source.auth_required'
 
     if (isAuthRequired) {
-      // Skip the action item if we have no source meta (and thus no
-      // loginUrl) to point the user to.
       const auth = meta?.auth
       if (meta !== undefined && auth !== undefined) {
         const firstInstruction = auth.instructions[0]
         const instructionSuffix =
           firstInstruction === undefined ? '' : ` ${firstInstruction}`
+        // The verb itself is the link — same pattern as overdue
+        // items above. This survives client-side paraphrasing better
+        // than a trailing "[Sign in](url)" tag.
         items.push({
           urgency: 5000,
-          text: `**[Auth required]** Sign in to ${meta.agency} → [${auth.loginUrl}](${auth.loginUrl}).${instructionSuffix} Then run \`compliance-record-evidence\` with \`sourceId: ${finding.source_id}\`.`,
+          text: `**🔐 Auth required** — [Sign in to ${meta.agency}](${auth.loginUrl}).${instructionSuffix} Then run \`compliance-record-evidence\` with \`sourceId: ${finding.source_id}\`.`,
         })
       }
     } else {
-      // Substantive warning (e.g. ca.ftb.exempt_status_not_verified)
-      const link =
-        meta === undefined ? '' : ` [Open ${meta.agency}](${meta.accessUrl})`
+      // Substantive warning (e.g. ca.ftb.exempt_status_not_verified).
+      // Wrap the finding title in the link so the action keeps it.
+      const titleWithLink =
+        meta === undefined
+          ? finding.title
+          : `[${finding.title}](${meta.accessUrl})`
       items.push({
         urgency: 100,
-        text: `**[${finding.severity === 'error' ? 'Blocker' : 'Investigate'}]** ${finding.title} — ${finding.detail}${link}`,
+        text: `**${finding.severity === 'error' ? '🛑 Blocker' : '⚠️ Investigate'}** — ${titleWithLink}. ${finding.detail}`,
       })
     }
   }

@@ -183,7 +183,7 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
       }),
     )
     expect(out).toContain(
-      '[ca-ag-registry](https://rct.doj.ca.gov/Verification/Web/Search.aspx)',
+      '[**California Attorney General — Registry of Charitable Trusts**](https://rct.doj.ca.gov/Verification/Web/Search.aspx) (ca-ag-registry)',
     )
     // detailUrl is intentionally NOT rendered as a link.
     expect(out).not.toContain('result=abc')
@@ -213,7 +213,7 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
       }),
     )
     expect(out).toContain(
-      '[ca-sos-bizfile](https://bizfileonline.sos.ca.gov/search/business)',
+      '[**California Secretary of State**](https://bizfileonline.sos.ca.gov/search/business) (ca-sos-bizfile)',
     )
   })
 
@@ -238,7 +238,7 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
       }),
     )
     expect(out).toContain(
-      '[ca-sos-bizfile](https://bizfileonline.sos.ca.gov/search/business)',
+      '[**California Secretary of State**](https://bizfileonline.sos.ca.gov/search/business) (ca-sos-bizfile)',
     )
   })
 
@@ -263,7 +263,7 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
       }),
     )
     expect(out).toContain(
-      '[ca-ag-registry](https://rct.doj.ca.gov/Verification/Web/Search.aspx)',
+      '[**California Attorney General — Registry of Charitable Trusts**](https://rct.doj.ca.gov/Verification/Web/Search.aspx) (ca-ag-registry)',
     )
   })
 
@@ -291,7 +291,9 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
     expect(out).toContain('connection reset')
   })
 
-  it('renders an auth_required failure with loginUrl + first 2 instructions', () => {
+  it('renders an auth_required failure with a single-line loginUrl + first instruction', () => {
+    // Single-line callout, not multi-bullet, because client-side
+    // paraphrasers compress sub-bullets but keep single lines intact.
     const out = renderComplianceStatusMarkdown(
       buildReport({
         latestRuns: [
@@ -311,11 +313,50 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
         ],
       }),
     )
-    expect(out).toContain('🔐 **Authentication required.**')
+    expect(out).toContain('🔐 sign in at')
     expect(out).toContain('https://www.ftb.ca.gov/myftb/')
     expect(out).toContain('Sign in to MyFTB at the link.')
-    expect(out).toContain('Open the Account Summary page for the business.')
     expect(out).toContain('`sourceId: ca-ftb-myftb`')
+  })
+
+  it('uses a default instruction when an auth-required source has no instructions configured', () => {
+    const sourcesNoInstructions: readonly ComplianceStatusSourceMeta[] = [
+      {
+        sourceId: 'ca-ftb-myftb',
+        agency: 'California Franchise Tax Board',
+        description: 'x',
+        accessUrl: 'https://www.ftb.ca.gov/myftb/',
+        tosUrl: 'https://www.ftb.ca.gov/help/conditions-of-use.html',
+        automationAllowed: true,
+        auth: {
+          loginUrl: 'https://www.ftb.ca.gov/myftb/',
+          instructions: [],
+          evidenceFields: [],
+          forbiddenActions: [],
+        },
+      },
+    ]
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        sources: sourcesNoInstructions,
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655441099',
+            source_id: 'ca-ftb-myftb',
+            jurisdiction_id: 'us-ca',
+            status: 'failed',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: 'auth_required',
+            error_message: null,
+            payload: null,
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Sign in and complete MFA.')
   })
 
   it('renders a failed run with null error_type as "failed"', () => {
@@ -1371,9 +1412,9 @@ describe('renderComplianceStatusMarkdown — per-source payload summaries', () =
         ],
       }),
     )
-    // Source row still renders, but no extra summary bullets between
-    // the status line and the "checked" line.
-    expect(out).toMatch(/_checked.*ago/)
+    // Source row still renders (checked-at marker at the end) but no
+    // payload summary segment is present.
+    expect(out).toMatch(/\(checked[\s\S]*?ago[\s\S]*?\)/)
   })
 
   it('produces no summary when payload is null even on a known source_id', () => {
@@ -1423,7 +1464,7 @@ describe('renderComplianceStatusMarkdown — per-source payload summaries', () =
       }),
     )
     expect(out).toContain('Overdue by 6 days')
-    expect(out).toContain('search by RCT #CT0292660')
+    expect(out).toContain('(RCT #CT0292660)')
   })
 
   it('action-item link omits the RCT # hint when the payload does not carry one', () => {
@@ -1447,7 +1488,7 @@ describe('renderComplianceStatusMarkdown — per-source payload summaries', () =
       }),
     )
     expect(out).toContain('Overdue by 6 days')
-    expect(out).not.toContain('search by RCT #')
+    expect(out).not.toContain('RCT #')
   })
 })
 
@@ -1473,10 +1514,12 @@ describe('renderComplianceStatusMarkdown — findings and action items', () => {
     )
     expect(out).toContain('## Open findings (1)')
     expect(out).toContain('⚠️')
-    expect(out).toContain('California FTB exempt status is not verified')
+    // The title itself is wrapped in the link (so client-side
+    // paraphrasers can't strip the link without dropping the title).
     expect(out).toContain(
-      '[ca-ftb-entity-status-letter](https://webapp.ftb.ca.gov/eletter/)',
+      '[**California FTB exempt status is not verified**](https://webapp.ftb.ca.gov/eletter/)',
     )
+    expect(out).toContain('(ca-ftb-entity-status-letter)')
   })
 
   it('does NOT generate an action item for info-severity findings', () => {
@@ -1576,8 +1619,12 @@ describe('renderComplianceStatusMarkdown — findings and action items', () => {
         ],
       }),
     )
-    expect(out).toContain('**[Investigate]**')
-    expect(out).toContain('California FTB exempt status is not verified')
+    expect(out).toContain('**⚠️ Investigate**')
+    // The finding title is wrapped in the source's accessUrl so the
+    // link survives client-side paraphrasing.
+    expect(out).toContain(
+      '[California FTB exempt status is not verified](https://webapp.ftb.ca.gov/eletter/)',
+    )
   })
 
   it('renders [Blocker] for error-severity findings', () => {
@@ -1600,7 +1647,7 @@ describe('renderComplianceStatusMarkdown — findings and action items', () => {
       }),
     )
     expect(out).toContain('🛑')
-    expect(out).toContain('**[Blocker]**')
+    expect(out).toContain('**🛑 Blocker**')
   })
 
   it('sorts overdue items ahead of upcoming items in the action list', () => {
@@ -1783,10 +1830,10 @@ describe('renderComplianceStatusMarkdown — findings and action items', () => {
         ],
       }),
     )
-    expect(out).toContain('**[Investigate]**')
+    expect(out).toContain('**⚠️ Investigate**')
     expect(out).toContain('FTB not exempt')
-    // No "[Open …]" linked-agency suffix because meta is missing.
-    expect(out).not.toMatch(/\[Open California /)
+    // No link on the title because there's no source meta.
+    expect(out).not.toMatch(/\[FTB not exempt\]\(http/)
   })
 
   it('skips renewal payloads whose date does not parse', () => {
