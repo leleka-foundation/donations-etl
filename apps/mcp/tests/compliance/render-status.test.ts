@@ -151,7 +151,12 @@ describe('renderComplianceStatusMarkdown — structure', () => {
 })
 
 describe('renderComplianceStatusMarkdown — per-source rows', () => {
-  it('uses payload.detailUrl as the primary link when available', () => {
+  it('uses the stable source accessUrl as the link even when payload carries a detailUrl', () => {
+    // payload.detailUrl appears per-entity but is session-bound on the
+    // CA AG server (redirects to /ErrorPage.html when followed without
+    // the original search session). We always link to the stable
+    // accessUrl and surface the entity identifier (RCT #) in the
+    // summary so the user can paste it into the search.
     const out = renderComplianceStatusMarkdown(
       buildReport({
         latestRuns: [
@@ -169,6 +174,8 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
               detailUrl:
                 'https://rct.doj.ca.gov/Verification/Web/Details.aspx?result=abc',
               renewalDueDate: '5/15/2026',
+              registryStatus: 'Current',
+              stateCharityRegistrationNumber: 'CT0292660',
             },
             job_id: null,
           },
@@ -176,8 +183,13 @@ describe('renderComplianceStatusMarkdown — per-source rows', () => {
       }),
     )
     expect(out).toContain(
-      '[ca-ag-registry](https://rct.doj.ca.gov/Verification/Web/Details.aspx?result=abc)',
+      '[ca-ag-registry](https://rct.doj.ca.gov/Verification/Web/Search.aspx)',
     )
+    // detailUrl is intentionally NOT rendered as a link.
+    expect(out).not.toContain('result=abc')
+    // The RCT number is surfaced in the row summary so the user can
+    // paste it into the search.
+    expect(out).toContain('CT0292660')
   })
 
   it('falls back to the source accessUrl when payload has no detailUrl', () => {
@@ -591,6 +603,851 @@ describe('renderComplianceStatusMarkdown — date arithmetic', () => {
       }),
     )
     expect(out).toContain('minutes ago')
+  })
+})
+
+describe('renderComplianceStatusMarkdown — per-source payload summaries', () => {
+  it('summarises irs-eo-bmf with subsection/status/foundation/deductibility and tax-period financials', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550000',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              decoded: {
+                subsection: '501(c)(3)',
+                status: 'Unconditional Exemption',
+                foundation:
+                  'Public charity: substantial public/government support',
+                deductibility: 'Contributions are deductible',
+              },
+              row: {
+                revenueAmount: '2907823',
+                assetAmount: '958949',
+                taxPeriod: '202412',
+              },
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('501(c)(3)')
+    expect(out).toContain('Unconditional Exemption')
+    expect(out).toContain('Public charity')
+    expect(out).toContain('Contributions are deductible')
+    expect(out).toContain('Tax period 2024-12')
+    expect(out).toContain('revenue $2,907,823')
+    expect(out).toContain('assets $958,949')
+  })
+
+  it('summarises irs-eo-bmf with revenue but missing assets', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550001',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              decoded: { subsection: '501(c)(3)' },
+              row: { taxPeriod: '202412', revenueAmount: '1000000' },
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('revenue $1,000,000')
+    expect(out).not.toContain('assets $')
+  })
+
+  it('skips the tax-period bullet when revenue is missing', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550002',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              decoded: { subsection: '501(c)(3)' },
+              row: { taxPeriod: '202412' },
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Tax period')
+  })
+
+  it('skips the bmf summary entirely when the schema fails to parse', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550003',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { decoded: 'not-an-object' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('501(c)(3)')
+  })
+
+  it('skips the bmf decoded line entirely when all decoded fields are empty', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550004',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { decoded: {} },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Public charity')
+  })
+
+  it('skips the bmf financials when revenue is non-numeric', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550005',
+            source_id: 'irs-eo-bmf',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              row: { taxPeriod: '202412', revenueAmount: 'banana' },
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('revenue $')
+  })
+
+  it('summarises irs-teos with deductibility code + no-auto-revocation', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550010',
+            source_id: 'irs-teos',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              pub78: { deductibilityCode: 'PC' },
+              autoRevocation: null,
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Listed in IRS Pub. 78')
+    expect(out).toContain('**PC**')
+    expect(out).toContain('No automatic revocation')
+  })
+
+  it('summarises irs-teos when autoRevocation is null but no deductibilityCode present', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550013',
+            source_id: 'irs-teos',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { autoRevocation: null },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('No automatic revocation')
+    expect(out).not.toContain('Listed in IRS Pub. 78')
+  })
+
+  it('summarises irs-teos with auto-revocation present (does not append the no-revocation line)', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550011',
+            source_id: 'irs-teos',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              pub78: { deductibilityCode: 'PC' },
+              autoRevocation: { revokedOn: '2025-01-01' },
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Listed in IRS Pub. 78')
+    expect(out).not.toContain('No automatic revocation')
+  })
+
+  it('skips the irs-teos summary entirely on a payload that fails schema', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550012',
+            source_id: 'irs-teos',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { pub78: 'invalid' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Listed in IRS Pub. 78')
+  })
+
+  it('summarises ca-sos-bizfile with entity status + standing + entity type + formed_in', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550020',
+            source_id: 'ca-sos-bizfile',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              entity_status: 'Active',
+              standing: 'Good Standing',
+              entity_type: 'Nonprofit Corporation - Out of State',
+              formed_in: 'DISTRICT OF COLUMBIA',
+              sos_entity_number: '6423690',
+              initial_filing_date: '10/14/2024',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain(
+      'Active · Good Standing · Nonprofit Corporation - Out of State',
+    )
+    expect(out).toContain('formed in DISTRICT OF COLUMBIA')
+    expect(out).toContain('Entity #6423690')
+    expect(out).toContain('initial filing 10/14/2024')
+  })
+
+  it('summarises ca-sos-bizfile when formed_in is absent', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550021',
+            source_id: 'ca-sos-bizfile',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              entity_status: 'Active',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Active')
+    expect(out).not.toContain('formed in')
+  })
+
+  it('skips the ca-sos-bizfile summary when the payload fails the schema', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550022',
+            source_id: 'ca-sos-bizfile',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { entity_status: 12345 },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    // entity_status is not a string -> safeParse fails -> no summary.
+    expect(out).not.toContain('Active')
+  })
+
+  it('summarises ca-ag-registry with registry status + RCT # + overdue renewal + last renewal', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550030',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              registryStatus: 'Current',
+              stateCharityRegistrationNumber: 'CT0292660',
+              renewalDueDate: '5/15/2026',
+              lastRenewal: '3/4/2026',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Registry status: **Current**')
+    expect(out).toContain('CT0292660')
+    expect(out).toContain('Next renewal: 5/15/2026')
+    expect(out).toContain('Overdue by 6 days')
+    expect(out).toContain('Last renewal filed: 3/4/2026')
+  })
+
+  it('shows "due in N days" for a future ca-ag-registry renewal', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550031',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              registryStatus: 'Current',
+              renewalDueDate: '6/15/2026',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('due in 25 days')
+  })
+
+  it('shows "due today" for a ca-ag-registry renewal due today', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550032',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: '5/21/2026' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('due today')
+  })
+
+  it('renders ca-ag-registry without RCT # when only registryStatus is present', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550033',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { registryStatus: 'Current' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Registry status: **Current**')
+    expect(out).not.toContain('(RCT #')
+  })
+
+  it('renders ca-ag-registry with an unparseable renewal date as the raw value', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550034',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: 'whenever' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Next renewal: whenever')
+  })
+
+  it('skips ca-ag-registry summary entirely on a schema-violating payload', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550035',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { registryStatus: 42 },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Registry status')
+  })
+
+  it('summarises ca-ftb-entity-status-letter and warning-flags the NOT EXEMPT case', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550040',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              ftb_status: 'ACTIVE',
+              exempt_status_verified: 'NOT EXEMPT',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Entity status: **ACTIVE**')
+    expect(out).toContain('Exempt status: ⚠️ **NOT EXEMPT**')
+  })
+
+  it('renders ftb exempt-status alone when ftb_status is absent', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550043',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { exempt_status_verified: 'EXEMPT' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Entity status:')
+    expect(out).toContain('Exempt status: **EXEMPT**')
+  })
+
+  it('renders ftb entity-status alone when exempt_status_verified is absent', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550044',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { ftb_status: 'ACTIVE' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Entity status: **ACTIVE**')
+    expect(out).not.toContain('Exempt status:')
+  })
+
+  it('does NOT warning-flag an exempt-verified ftb result', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550041',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              ftb_status: 'ACTIVE',
+              exempt_status_verified: 'EXEMPT',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Exempt status: **EXEMPT**')
+    expect(out).not.toMatch(/Exempt status: ⚠️/)
+  })
+
+  it('skips the ftb letter summary entirely on a schema-violating payload', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550042',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { ftb_status: 12345 },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Entity status')
+  })
+
+  it('summarises ca-cdtfa-permit-license-verification with valid tag + account # + owner + start date', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550050',
+            source_id: 'ca-cdtfa-permit-license-verification',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              account_type: 'Sellers Permit',
+              account_number: '202-822944',
+              owner_name: 'LELEKA FOUNDATION',
+              start_date: '01-Sep-2023',
+              is_valid: true,
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('**Valid** Sellers Permit #202-822944')
+    expect(out).toContain('Owner: LELEKA FOUNDATION')
+    expect(out).toContain('Start date: 01-Sep-2023')
+  })
+
+  it('skips the cdtfa account-line when account_number is missing', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550053',
+            source_id: 'ca-cdtfa-permit-license-verification',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              account_type: 'Sellers Permit',
+              owner_name: 'LELEKA FOUNDATION',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    // account_type present but account_number missing → no "Sellers
+    // Permit #..." line. Owner line still renders.
+    expect(out).not.toMatch(/Sellers Permit #/)
+    expect(out).toContain('Owner: LELEKA FOUNDATION')
+  })
+
+  it('omits the "Valid" prefix when is_valid is false', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550051',
+            source_id: 'ca-cdtfa-permit-license-verification',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              account_type: 'Sellers Permit',
+              account_number: '202-822944',
+              owner_name: null,
+              start_date: null,
+              is_valid: false,
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Sellers Permit #202-822944')
+    expect(out).not.toContain('**Valid** Sellers Permit')
+    expect(out).not.toContain('Owner:')
+    expect(out).not.toContain('Start date:')
+  })
+
+  it('skips the cdtfa summary entirely on a schema-violating payload', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550052',
+            source_id: 'ca-cdtfa-permit-license-verification',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { account_number: 12345 },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Sellers Permit')
+  })
+
+  it('produces no summary for an unknown source_id', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550060',
+            source_id: 'totally-unknown-source',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { hello: 'world' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    // Source row still renders, but no extra summary bullets between
+    // the status line and the "checked" line.
+    expect(out).toMatch(/_checked.*ago/)
+  })
+
+  it('produces no summary when payload is null even on a known source_id', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550061',
+            source_id: 'irs-teos',
+            jurisdiction_id: 'us-federal',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: null,
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).not.toContain('Listed in IRS Pub. 78')
+  })
+
+  it('action-item link includes the RCT # hint for ca-ag-registry overdue renewals', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550070',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: {
+              renewalDueDate: '5/15/2026',
+              stateCharityRegistrationNumber: 'CT0292660',
+            },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Overdue by 6 days')
+    expect(out).toContain('search by RCT #CT0292660')
+  })
+
+  it('action-item link omits the RCT # hint when the payload does not carry one', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655550071',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: '5/15/2026' },
+            job_id: null,
+          },
+        ],
+      }),
+    )
+    expect(out).toContain('Overdue by 6 days')
+    expect(out).not.toContain('search by RCT #')
   })
 })
 
