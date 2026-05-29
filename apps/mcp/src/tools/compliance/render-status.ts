@@ -474,7 +474,7 @@ function renderFinding(
 /**
  * Action items are derived heuristically from open findings + a few
  * payload-level signals (renewal due dates). Sorted by urgency:
- *   overdue deadlines → upcoming deadlines → substantive warnings →
+ *   overdue deadlines → substantive warnings → upcoming deadlines →
  *   auth_required → info.
  */
 interface ActionItem {

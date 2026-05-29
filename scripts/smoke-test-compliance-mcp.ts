@@ -251,7 +251,46 @@ async function main(): Promise<void> {
         `tool returned isError=true:\n${statusResult.content[0]?.text ?? '(no text)'}`,
       )
     }
-    const statusBody = z
+    // The tool now returns ONLY the server-rendered Markdown report
+    // (the structured JSON lives on the compliance://status resource,
+    // verified below). Assert the Markdown is well-formed rather than
+    // JSON.parse-ing it.
+    const statusMarkdown = statusResult.content[0]?.text ?? ''
+    if (!statusMarkdown.startsWith('# Compliance Status:')) {
+      fail(
+        'compliance-status',
+        `expected Markdown report starting with "# Compliance Status:", got:\n${statusMarkdown.slice(0, 200)}`,
+      )
+    }
+    ok(
+      'compliance-status',
+      `Markdown report (${String(statusMarkdown.length)} chars)`,
+    )
+
+    console.log(`\n\x1b[36m▶\x1b[0m resources/read compliance://status`)
+    const resourceRpc = await rpc(opts.baseUrl, accessToken, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'resources/read',
+      params: { uri: 'compliance://status' },
+    })
+    if (resourceRpc.error !== undefined) {
+      fail('compliance://status', JSON.stringify(resourceRpc.error))
+    }
+    const resourceResult = z
+      .object({
+        contents: z.array(
+          z.object({
+            uri: z.string(),
+            mimeType: z.string().optional(),
+            text: z.string(),
+          }),
+        ),
+      })
+      .parse(resourceRpc.result)
+    // Full structured validation happens here against the JSON the
+    // resource returns.
+    const resourceBody = z
       .object({
         overall: z.enum(['clear', 'attention_required', 'unknown']),
         now: z.string().min(1),
@@ -276,57 +315,35 @@ async function main(): Promise<void> {
           )
           .min(1),
       })
-      .parse(JSON.parse(statusResult.content[0]?.text ?? '{}'))
+      .parse(JSON.parse(resourceResult.contents[0]?.text ?? '{}'))
     // Verify the enrichment landed: every source has a URL, at least
     // one source carries auth metadata, and `now` is the current ISO.
-    const nowParsed = new Date(statusBody.now)
+    const nowParsed = new Date(resourceBody.now)
     const drift = Math.abs(nowParsed.getTime() - Date.now())
     if (drift > 60_000) {
       fail(
-        'compliance-status',
+        'compliance://status',
         `now drift ${String(drift)}ms — server clock skew?`,
       )
     }
-    const withAuth = statusBody.sources.filter((s) => s.auth !== undefined)
+    const withAuth = resourceBody.sources.filter((s) => s.auth !== undefined)
     if (withAuth.length === 0) {
       fail(
-        'compliance-status',
+        'compliance://status',
         'expected at least one source to carry auth metadata',
       )
     }
-    ok(
-      'compliance-status',
-      `overall=${statusBody.overall}, entity=${statusBody.entity.legal_name}, sources=${String(statusBody.sources.length)}, withAuth=${String(withAuth.length)}, now-drift=${String(drift)}ms`,
-    )
-
-    console.log(`\n\x1b[36m▶\x1b[0m resources/read compliance://status`)
-    const resourceRpc = await rpc(opts.baseUrl, accessToken, {
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'resources/read',
-      params: { uri: 'compliance://status' },
-    })
-    if (resourceRpc.error !== undefined) {
-      fail('compliance://status', JSON.stringify(resourceRpc.error))
+    // Cross-check: the tool's Markdown report names the same entity the
+    // resource reports structurally.
+    if (!statusMarkdown.includes(resourceBody.entity.legal_name)) {
+      fail(
+        'compliance-status',
+        `Markdown report does not mention entity "${resourceBody.entity.legal_name}"`,
+      )
     }
-    const resourceResult = z
-      .object({
-        contents: z.array(
-          z.object({
-            uri: z.string(),
-            mimeType: z.string().optional(),
-            text: z.string(),
-          }),
-        ),
-      })
-      .parse(resourceRpc.result)
-    const resourceBody = z
-      .object({ overall: z.string() })
-      .loose()
-      .parse(JSON.parse(resourceResult.contents[0]?.text ?? '{}'))
     ok(
       'compliance://status',
-      `overall=${String(resourceBody.overall)}, uri=${resourceResult.contents[0]?.uri ?? ''}`,
+      `overall=${resourceBody.overall}, entity=${resourceBody.entity.legal_name}, sources=${String(resourceBody.sources.length)}, withAuth=${String(withAuth.length)}, now-drift=${String(drift)}ms, uri=${resourceResult.contents[0]?.uri ?? ''}`,
     )
 
     console.log(`\n\x1b[32m✓ all checks passed\x1b[0m`)
