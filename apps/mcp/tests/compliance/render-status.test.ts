@@ -1695,6 +1695,113 @@ describe('renderComplianceStatusMarkdown — findings and action items', () => {
     expect(overdueIdx).toBeLessThan(authIdx)
   })
 
+  it('interleaves deadlines and findings by urgency: overdue → blocker → imminent deadline → warning → later deadline → auth', () => {
+    const out = renderComplianceStatusMarkdown(
+      buildReport({
+        latestRuns: [
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655440200',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: '5/15/2026' }, // 6 days overdue
+            job_id: null,
+          },
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655440201',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: '5/24/2026' }, // due in 3 days (imminent)
+            job_id: null,
+          },
+          {
+            run_id: '550e8400-e29b-41d4-a716-446655440202',
+            source_id: 'ca-ag-registry',
+            jurisdiction_id: 'us-ca',
+            status: 'succeeded',
+            started_at: '2026-05-21T11:00:00.000Z',
+            completed_at: '2026-05-21T11:00:01.000Z',
+            duration_ms: 1000,
+            error_type: null,
+            error_message: null,
+            payload: { renewalDueDate: '6/30/2026' }, // due in 40 days (later)
+            job_id: null,
+          },
+        ],
+        openFindings: [
+          {
+            finding_id: '550e8400-e29b-41d4-a716-446655440203',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            severity: 'error',
+            status: 'open',
+            title: 'Hard block',
+            detail: 'Stop the world.',
+            evidence: { code: 'ca.ftb.block' },
+            opened_at: '2026-05-21T11:00:00.000Z',
+            resolved_at: null,
+          },
+          {
+            finding_id: '550e8400-e29b-41d4-a716-446655440204',
+            source_id: 'ca-ftb-entity-status-letter',
+            jurisdiction_id: 'us-ca',
+            severity: 'warn',
+            status: 'open',
+            title: 'Exempt status not verified',
+            detail: 'Investigate this.',
+            evidence: { code: 'ca.ftb.exempt_status_not_verified' },
+            opened_at: '2026-05-21T11:00:00.000Z',
+            resolved_at: null,
+          },
+          {
+            finding_id: '550e8400-e29b-41d4-a716-446655440205',
+            source_id: 'ca-ftb-myftb',
+            jurisdiction_id: 'us-ca',
+            severity: 'warn',
+            status: 'open',
+            title: 'MyFTB auth required',
+            detail: 'auth',
+            evidence: { code: 'source.auth_required' },
+            opened_at: '2026-05-21T11:00:00.000Z',
+            resolved_at: null,
+          },
+        ],
+      }),
+    )
+    const overdueIdx = out.indexOf('Overdue by 6 days')
+    const blockerIdx = out.indexOf('**🛑 Blocker**')
+    const imminentIdx = out.indexOf('Due in 3 days')
+    const warningIdx = out.indexOf('**⚠️ Investigate**')
+    const laterIdx = out.indexOf('Due in 40 days')
+    const authIdx = out.indexOf('Sign in to California Franchise Tax Board')
+    for (const idx of [
+      overdueIdx,
+      blockerIdx,
+      imminentIdx,
+      warningIdx,
+      laterIdx,
+      authIdx,
+    ]) {
+      expect(idx).toBeGreaterThan(-1)
+    }
+    expect(overdueIdx).toBeLessThan(blockerIdx)
+    expect(blockerIdx).toBeLessThan(imminentIdx)
+    expect(imminentIdx).toBeLessThan(warningIdx)
+    expect(warningIdx).toBeLessThan(laterIdx)
+    expect(laterIdx).toBeLessThan(authIdx)
+  })
+
   it('skips renewal payloads whose renewalDueDate is non-string', () => {
     const out = renderComplianceStatusMarkdown(
       buildReport({

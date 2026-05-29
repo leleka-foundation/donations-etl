@@ -474,13 +474,30 @@ function renderFinding(
 /**
  * Action items are derived heuristically from open findings + a few
  * payload-level signals (renewal due dates). Sorted by urgency:
- *   overdue deadlines → substantive warnings → upcoming deadlines →
- *   auth_required → info.
+ *   overdue deadlines → blockers → imminent deadlines → substantive
+ *   warnings → later deadlines → auth_required → info.
+ *
+ * The split point for deadlines is IMMINENT_DEADLINE_DAYS: a renewal
+ * due within that window outranks substantive warnings (a deadline a
+ * few days out is more pressing than a soft "investigate"); a deadline
+ * further out is shown after warnings.
  */
 interface ActionItem {
   readonly urgency: number // lower = more urgent
   readonly text: string
 }
+
+// Urgency bands for action-item sorting (lower = more urgent). Overdue
+// deadlines use their (negative) day count directly, so they always
+// sort ahead of everything below.
+const URGENCY_BLOCKER = 10
+const URGENCY_IMMINENT_DEADLINE_BASE = 100 // + days until due
+const URGENCY_WARNING = 200
+const URGENCY_LATER_DEADLINE_BASE = 300 // + days until due
+const URGENCY_AUTH_REQUIRED = 5000
+// A renewal due within this many days outranks substantive warnings;
+// beyond it, the warning is shown first.
+const IMMINENT_DEADLINE_DAYS = 14
 
 function deriveActionItems(
   report: EnrichedComplianceStatusReport,
@@ -528,12 +545,19 @@ function deriveActionItems(
         : `[Renew ${agency} registration${idHint}](${link})`
     if (diffDays < 0) {
       items.push({
-        urgency: -diffDays * -1, // most overdue → most urgent
+        urgency: diffDays, // negative — most overdue → most urgent
         text: `**🚨 Overdue by ${String(-diffDays)} days** — ${renewLink}. Was due ${due} (today is ${now.toFormat('yyyy-LL-dd')}).`,
       })
     } else if (diffDays <= 60) {
+      // Imminent deadlines outrank substantive warnings; later ones
+      // fall below warnings. Adding diffDays keeps nearer deadlines
+      // ahead of further ones within each band.
+      const base =
+        diffDays <= IMMINENT_DEADLINE_DAYS
+          ? URGENCY_IMMINENT_DEADLINE_BASE
+          : URGENCY_LATER_DEADLINE_BASE
       items.push({
-        urgency: 1000 + diffDays,
+        urgency: base + diffDays,
         text: `**Due in ${String(diffDays)} days** — ${renewLink}. Due ${due}.`,
       })
     }
@@ -555,20 +579,23 @@ function deriveActionItems(
         // items above. This survives client-side paraphrasing better
         // than a trailing "[Sign in](url)" tag.
         items.push({
-          urgency: 5000,
+          urgency: URGENCY_AUTH_REQUIRED,
           text: `**🔐 Auth required** — [Sign in to ${meta.agency}](${auth.loginUrl}).${instructionSuffix} Then run \`compliance-record-evidence\` with \`sourceId: ${finding.source_id}\`.`,
         })
       }
     } else {
-      // Substantive warning (e.g. ca.ftb.exempt_status_not_verified).
-      // Wrap the finding title in the link so the action keeps it.
+      // Substantive finding (e.g. ca.ftb.exempt_status_not_verified).
+      // Error severity is a blocker (most urgent non-overdue item);
+      // warn severity is an investigate. Wrap the finding title in the
+      // link so the action keeps it.
+      const isError = finding.severity === 'error'
       const titleWithLink =
         meta === undefined
           ? finding.title
           : `[${finding.title}](${meta.accessUrl})`
       items.push({
-        urgency: 100,
-        text: `**${finding.severity === 'error' ? '🛑 Blocker' : '⚠️ Investigate'}** — ${titleWithLink}. ${finding.detail}`,
+        urgency: isError ? URGENCY_BLOCKER : URGENCY_WARNING,
+        text: `**${isError ? '🛑 Blocker' : '⚠️ Investigate'}** — ${titleWithLink}. ${finding.detail}`,
       })
     }
   }
