@@ -64,6 +64,7 @@ MCP_ALLOWED_DOMAIN="${MCP_ALLOWED_DOMAIN:?MCP_ALLOWED_DOMAIN must be set}"
 
 SERVICE_NAME="mcp-server"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:latest"
+COMPLIANCE_DISCOVER_JOB_NAME="${COMPLIANCE_DISCOVER_JOB_NAME:-compliance-discover}"
 
 log "Deployment configuration:"
 log "  Project:  ${PROJECT_ID}"
@@ -269,6 +270,55 @@ DEFAULT_SIGNER_TITLE=DEFAULT_SIGNER_TITLE:latest" \
   fi
 
   log "Deploy complete."
+fi
+
+echo ""
+
+# ── Compliance discovery Cloud Run Job ────────────────────────────
+# The compliance-discover-start MCP tool triggers an execution of this
+# Job (same image, different entrypoint) so discovery runs out-of-band —
+# surviving the service scaling to zero and the 600s request timeout.
+
+log "Ensuring Cloud Run Job: ${COMPLIANCE_DISCOVER_JOB_NAME}..."
+if [[ "$DRY_RUN" == "true" ]]; then
+  log "  Would create/update job ${COMPLIANCE_DISCOVER_JOB_NAME} (entrypoint: bun dist/compliance-discover-job.js)"
+  log "  Would grant ${RUNTIME_SA_EMAIL} permission to run it"
+else
+  JOB_ENV="PROJECT_ID=${PROJECT_ID},DATASET_CANON=${DATASET_CANON},REGION=${REGION},COMPLIANCE_BROWSER_HEADLESS=1"
+  if gcloud run jobs describe "${COMPLIANCE_DISCOVER_JOB_NAME}" \
+      --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
+    gcloud run jobs update "${COMPLIANCE_DISCOVER_JOB_NAME}" \
+      --region "${REGION}" --project "${PROJECT_ID}" \
+      --image "${IMAGE_URI}" \
+      --service-account "${RUNTIME_SA_EMAIL}" \
+      --command bun \
+      --args dist/compliance-discover-job.js \
+      --set-env-vars "${JOB_ENV}" \
+      --memory 4Gi --cpu 2 --max-retries 1 --tasks 1 --task-timeout 3600s \
+      --quiet
+    log "  Job updated."
+  else
+    gcloud run jobs create "${COMPLIANCE_DISCOVER_JOB_NAME}" \
+      --region "${REGION}" --project "${PROJECT_ID}" \
+      --image "${IMAGE_URI}" \
+      --service-account "${RUNTIME_SA_EMAIL}" \
+      --command bun \
+      --args dist/compliance-discover-job.js \
+      --set-env-vars "${JOB_ENV}" \
+      --memory 4Gi --cpu 2 --max-retries 1 --tasks 1 --task-timeout 3600s \
+      --quiet
+    log "  Job created."
+  fi
+
+  # Let the MCP service's runtime SA trigger executions of this Job.
+  # roles/run.invoker carries run.jobs.run for job execution; if a future
+  # IAM change requires more, grant roles/run.developer instead.
+  gcloud run jobs add-iam-policy-binding "${COMPLIANCE_DISCOVER_JOB_NAME}" \
+    --region "${REGION}" --project "${PROJECT_ID}" \
+    --member "serviceAccount:${RUNTIME_SA_EMAIL}" \
+    --role "roles/run.invoker" \
+    --quiet >/dev/null
+  log "  Granted ${RUNTIME_SA_EMAIL} run.invoker on the job."
 fi
 
 echo ""

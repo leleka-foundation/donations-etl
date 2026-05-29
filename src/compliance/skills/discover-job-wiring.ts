@@ -1,16 +1,17 @@
 /**
  * Production wiring for the async compliance-discover job flow.
  *
- * `startDiscoveryJobProduction` mirrors `runDiscoveryProduction` (which the
- * synchronous local skill uses) but wraps the discovery call in the
- * job-control orchestrator from `discover-job.ts`. The actual discovery
- * runs fire-and-forget; the caller polls via
+ * `startDiscoveryJobProduction` inserts the parent `discovery_jobs` row and
+ * triggers a Cloud Run **Job** execution (via `createCloudRunJobLauncher`)
+ * that runs the discovery out-of-band. The Job process calls
+ * `executeDiscoveryJobProduction` (which runs `runDiscoveryAndPersist`) and
+ * records the terminal status. The caller polls via
  * `readDiscoveryJobStatusProduction` and fetches the report with
  * `readDiscoveryJobResultProduction`.
  */
 import type { ResultAsync } from 'neverthrow'
-import { errAsync } from 'neverthrow'
 import { join } from 'node:path'
+import { z } from 'zod'
 import { usCaJurisdiction } from '../jurisdictions/us-ca/index.ts'
 import { usFederalJurisdiction } from '../jurisdictions/us-federal/index.ts'
 import {
@@ -22,8 +23,8 @@ import {
   type DownloadCacheStore,
 } from '../sources/download-cache.ts'
 import { createFindingsAccessor } from '../state/bq-findings.ts'
-import type { DiscoveryJobsAccessor } from '../state/bq-jobs.ts'
 import { createDiscoveryRunsAccessor } from '../state/bq-runs.ts'
+import { createCloudRunJobLauncher } from '../state/cloud-run-jobs.ts'
 import {
   createFirestoreDiscoveryJobsAccessor,
   type FirestoreClientLike,
@@ -32,13 +33,13 @@ import type { FetchImpl, Jurisdiction } from '../types/index.ts'
 import {
   readDiscoveryJobResult,
   readDiscoveryJobStatus,
+  runDiscoveryAndPersist,
   startDiscoveryJob,
-  voidSpawn,
   type DiscoveryJobFilter,
   type DiscoveryJobStatusReport,
+  type LaunchDiscovery,
   type ReadDiscoveryJobResultError,
   type ReadDiscoveryJobStatusError,
-  type SpawnDiscoveryJob,
   type StartDiscoveryJobError,
   type StartDiscoveryJobReport,
 } from './discover-job.ts'
@@ -68,14 +69,12 @@ export const defaultDiscoverJobFetch: FetchImpl = (input, init) =>
   fetch(input, init)
 
 /**
- * Top-level error a production caller may see when starting a job. Includes
- * the underlying persist error plus a `wiring` case that fires only on
- * jurisdiction registration conflicts (typically: two jurisdictions with
- * the same id).
+ * Top-level error a production caller may see when starting a job:
+ * `persist` (the parent row insert failed) or `launch` (the Cloud Run Job
+ * execution could not be triggered). Filter/registry resolution happens
+ * inside the executor (`executeDiscoveryJobProduction`), not here.
  */
-export type StartDiscoveryJobProductionError =
-  | StartDiscoveryJobError
-  | { readonly type: 'wiring'; readonly message: string }
+export type StartDiscoveryJobProductionError = StartDiscoveryJobError
 
 /**
  * Wiring args for the production start entry point.
@@ -85,9 +84,58 @@ export type StartDiscoveryJobProductionError =
  * which BigQuery's streaming buffer cannot provide for ~30-90 minutes
  * after insert. Callers pass the same Firestore instance the OAuth
  * storage uses.
+ *
+ * `region` + `jobName` identify the Cloud Run Job to trigger. Tests inject
+ * `launch` directly to avoid touching the Cloud Run Admin API.
  */
 export interface StartDiscoveryJobProductionArgs {
   readonly projectId: string
+  readonly region: string
+  readonly jobName: string
+  readonly filter: DiscoveryJobFilter
+  readonly firestore: FirestoreClientLike
+  readonly now?: () => Date
+  readonly launch?: LaunchDiscovery
+  readonly generateJobId?: () => string
+  readonly logger?: { error: (message: string, err: unknown) => void }
+}
+
+/**
+ * Start an async discover job against real GCP services. Inserts the parent
+ * `discovery_jobs` row, then triggers a Cloud Run Job execution that runs
+ * the discovery out-of-band. Returns `{ jobId }` as soon as the execution
+ * is accepted; the caller polls `readDiscoveryJobStatusProduction`.
+ */
+export function startDiscoveryJobProduction(
+  args: StartDiscoveryJobProductionArgs,
+): ResultAsync<StartDiscoveryJobReport, StartDiscoveryJobProductionError> {
+  const now = args.now ?? defaultDiscoverJobNow
+  const launch =
+    args.launch ??
+    createCloudRunJobLauncher({
+      projectId: args.projectId,
+      region: args.region,
+      jobName: args.jobName,
+    })
+
+  return startDiscoveryJob({
+    jobsAccessor: createFirestoreDiscoveryJobsAccessor(args.firestore),
+    now,
+    filter: args.filter,
+    launch,
+    generateJobId: args.generateJobId,
+    logger: args.logger,
+  })
+}
+
+/**
+ * Wiring args for the out-of-band executor entry point — the body the
+ * Cloud Run Job process runs. It builds the full discovery deps against
+ * real GCP services and transitions the parent row to its terminal status.
+ */
+export interface ExecuteDiscoveryJobProductionArgs {
+  readonly projectId: string
+  readonly jobId: string
   readonly filter: DiscoveryJobFilter
   readonly firestore: FirestoreClientLike
   readonly bqFactory?: BigQueryFactory
@@ -97,19 +145,19 @@ export interface StartDiscoveryJobProductionArgs {
   readonly jurisdictions?: readonly Jurisdiction[]
   readonly downloadCache?: DownloadCacheStore
   readonly downloadCacheDir?: string
-  readonly spawn?: SpawnDiscoveryJob
-  readonly generateJobId?: () => string
   readonly logger?: { error: (message: string, err: unknown) => void }
 }
 
 /**
- * Start an async discover job against real GCP services. Returns
- * `{ jobId }` once the parent row is inserted; the actual sourcing runs
- * in the background and updates the row when it finishes.
+ * Run one discovery job to completion (the body the Cloud Run Job executes)
+ * and persist its terminal status. Resolves once the parent row has been
+ * transitioned — it never rejects; failures are recorded on the job row.
+ * A filter that resolves to no sources, or a registration conflict, marks
+ * the job `failed` with a `wiring` error.
  */
-export function startDiscoveryJobProduction(
-  args: StartDiscoveryJobProductionArgs,
-): ResultAsync<StartDiscoveryJobReport, StartDiscoveryJobProductionError> {
+export async function executeDiscoveryJobProduction(
+  args: ExecuteDiscoveryJobProductionArgs,
+): Promise<void> {
   const now = args.now ?? defaultDiscoverJobNow
   const fetchImpl: FetchImpl = args.fetch ?? defaultDiscoverJobFetch
   const jurisdictions = args.jurisdictions ?? [
@@ -121,13 +169,25 @@ export function startDiscoveryJobProduction(
     new LocalDownloadCacheStore(
       args.downloadCacheDir ?? join(process.cwd(), '.cache', 'compliance'),
     )
+  const jobsAccessor = createFirestoreDiscoveryJobsAccessor(args.firestore)
 
   const registryResult = buildFilteredRegistry(jurisdictions, args.filter)
   if (registryResult.kind === 'err') {
-    return errAsync<StartDiscoveryJobReport, StartDiscoveryJobProductionError>({
-      type: 'wiring',
-      message: registryResult.message,
+    const finish = await jobsAccessor.markJobFinished({
+      jobId: args.jobId,
+      finishedAt: now().toISOString(),
+      status: 'failed',
+      errorType: 'wiring',
+      errorMessage: registryResult.message,
+      result: null,
     })
+    if (finish.isErr()) {
+      args.logger?.error(
+        `Failed to persist wiring-error status for job ${args.jobId}`,
+        finish.error,
+      )
+    }
+    return
   }
 
   const deps = buildCommonDeps({
@@ -136,8 +196,6 @@ export function startDiscoveryJobProduction(
     bqFactory: args.bqFactory,
     secretManagerFactory: args.secretManagerFactory,
   })
-  const jobsAccessor: DiscoveryJobsAccessor =
-    createFirestoreDiscoveryJobsAccessor(args.firestore)
   const runsAccessor = createDiscoveryRunsAccessor({
     runner: deps.queryRunner,
     projectId: args.projectId,
@@ -147,7 +205,7 @@ export function startDiscoveryJobProduction(
     projectId: args.projectId,
   })
 
-  return startDiscoveryJob({
+  await runDiscoveryAndPersist(args.jobId, {
     jobsAccessor,
     runsAccessor,
     findingsAccessor,
@@ -164,10 +222,56 @@ export function startDiscoveryJobProduction(
         fetch: fetchImpl,
         downloadCache,
       }),
-    spawn: args.spawn ?? voidSpawn,
-    generateJobId: args.generateJobId,
     logger: args.logger,
   })
+}
+
+/**
+ * Env schema for the Cloud Run Job entrypoint. `DISCOVERY_JOB_ID` (+ the
+ * optional filter fields) are set by the launcher as execution-time
+ * overrides; `PROJECT_ID` comes from the Job's deploy-time env. All
+ * external — validated with Zod.
+ */
+const DiscoverJobEnvSchema = z.object({
+  PROJECT_ID: z.string().min(1),
+  DISCOVERY_JOB_ID: z.string().min(1),
+  DISCOVERY_SOURCES: z.string().optional(),
+  DISCOVERY_JURISDICTION_ID: z.string().optional(),
+})
+
+/**
+ * Parsed form of the Cloud Run Job entrypoint environment.
+ */
+export interface ParsedDiscoverJobEnv {
+  readonly projectId: string
+  readonly jobId: string
+  readonly filter: DiscoveryJobFilter
+}
+
+/**
+ * Parse + validate the Cloud Run Job entrypoint's environment into a
+ * project id, job id, and discovery filter. A comma-separated
+ * `DISCOVERY_SOURCES` becomes an array; an empty or absent value means
+ * "all sources".
+ */
+export function parseDiscoverJobEnv(
+  env: Record<string, string | undefined>,
+): ParsedDiscoverJobEnv {
+  const parsed = DiscoverJobEnvSchema.parse(env)
+  const sources =
+    parsed.DISCOVERY_SOURCES === undefined
+      ? null
+      : parsed.DISCOVERY_SOURCES.split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+  return {
+    projectId: parsed.PROJECT_ID,
+    jobId: parsed.DISCOVERY_JOB_ID,
+    filter: {
+      sources: sources !== null && sources.length > 0 ? sources : null,
+      jurisdictionId: parsed.DISCOVERY_JURISDICTION_ID ?? null,
+    },
+  }
 }
 
 /**

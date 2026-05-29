@@ -3,17 +3,18 @@
  *
  * Three operations:
  *   1. `startDiscoveryJob` — write a `discovery_jobs` row with status
- *      `running`, spawn the underlying discovery in the background, and
- *      return the new `jobId` synchronously to the caller.
+ *      `running`, trigger the out-of-band executor via an injected
+ *      `LaunchDiscovery`, and return the new `jobId` to the caller.
  *   2. `readDiscoveryJobStatus` — read the parent row + count of completed
  *      per-source runs.
  *   3. `readDiscoveryJobResult` — read the parent row and return its stored
  *      `result` payload, refusing if the job is not yet `completed`.
  *
- * Splitting "spawn" out as an injectable strategy makes the fire-and-forget
- * branch directly testable: tests inject a strategy that records the
- * background promise so the test can await it. Production uses
- * `voidSpawn`, which discards the promise (true fire-and-forget).
+ * The discovery itself runs in `runDiscoveryAndPersist`, invoked by the
+ * executor — a Cloud Run Job in production (see `cloud-run-jobs.ts`) — not
+ * inside the MCP request. Splitting the launch out as an injectable
+ * strategy keeps both `startDiscoveryJob` and `runDiscoveryAndPersist`
+ * directly testable without a real executor.
  */
 import type { ResultAsync } from 'neverthrow'
 import { errAsync, okAsync } from 'neverthrow'
@@ -42,7 +43,7 @@ export interface DiscoveryJobFilter {
  * Failure modes for the start flow.
  */
 export interface StartDiscoveryJobError {
-  readonly type: 'persist'
+  readonly type: 'persist' | 'launch'
   readonly message: string
 }
 
@@ -62,19 +63,31 @@ export type ReadDiscoveryJobResultError =
   | { readonly type: 'not_ready'; readonly message: string }
 
 /**
- * Strategy injected for spawning the background work. Production wires
- * `voidSpawn`; tests record the promise so the test can await it.
+ * Strategy injected for launching the out-of-band discovery executor.
+ *
+ * Production wires a launcher that triggers a Cloud Run **Job** execution
+ * (`createCloudRunJobLauncher`), so the discovery runs in its own process
+ * with a request-independent lifecycle — it survives the MCP service
+ * scaling to zero and runs past the HTTP request timeout. The launcher
+ * resolves as soon as the execution is *accepted*; the job itself reports
+ * its own terminal status to Firestore via `runDiscoveryAndPersist`.
+ *
+ * Tests inject a fake launcher that records the call (and, when they want
+ * to exercise the persistence path, run `runDiscoveryAndPersist` directly).
  */
-export type SpawnDiscoveryJob = (run: () => Promise<void>) => void
-
-/**
- * Fire-and-forget spawn — used in production. The orchestrator handles every
- * error inside the spawned function before it rejects, so discarding the
- * promise is safe.
- */
-export const voidSpawn: SpawnDiscoveryJob = (run) => {
-  void run()
+export interface LaunchDiscoveryArgs {
+  readonly jobId: string
+  readonly filter: DiscoveryJobFilter
 }
+
+export interface LaunchDiscoveryError {
+  readonly type: 'launch'
+  readonly message: string
+}
+
+export type LaunchDiscovery = (
+  args: LaunchDiscoveryArgs,
+) => ResultAsync<void, LaunchDiscoveryError>
 
 /**
  * Production-facing alias for the discovery-run function the orchestrator
@@ -88,21 +101,38 @@ export type RunDiscoveryForJob = (args: {
 }) => ResultAsync<DiscoveryReport, DiscoveryError>
 
 /**
- * Wiring for `startDiscoveryJob`.
+ * Wiring for `startDiscoveryJob`. The start path only inserts the parent
+ * row and hands off to the launcher — the heavy discovery deps
+ * (`runsAccessor` / `findingsAccessor` / `runDiscovery`) live on
+ * `RunDiscoveryAndPersistArgs`, consumed by the out-of-band executor.
  */
 export interface StartDiscoveryJobArgs {
+  readonly jobsAccessor: DiscoveryJobsAccessor
+  readonly now: () => Date
+  readonly filter: DiscoveryJobFilter
+  readonly launch: LaunchDiscovery
+  readonly generateJobId?: () => string
+  /**
+   * Optional logger so the start path can record a best-effort cleanup
+   * failure (marking an un-launched job failed) the caller never sees.
+   */
+  readonly logger?: {
+    error: (message: string, err: unknown) => void
+  }
+}
+
+/**
+ * Wiring for `runDiscoveryAndPersist` — the body the out-of-band executor
+ * runs. It owns the discovery deps and transitions the parent row to its
+ * terminal status.
+ */
+export interface RunDiscoveryAndPersistArgs {
   readonly jobsAccessor: DiscoveryJobsAccessor
   readonly runsAccessor: DiscoveryRunsAccessor
   readonly findingsAccessor: FindingsAccessor
   readonly now: () => Date
   readonly filter: DiscoveryJobFilter
   readonly runDiscovery: RunDiscoveryForJob
-  readonly spawn?: SpawnDiscoveryJob
-  readonly generateJobId?: () => string
-  /**
-   * Optional logger so the orchestrator can record background failures the
-   * caller never sees. Tests can pass a vi.fn() to assert on the log.
-   */
   readonly logger?: {
     error: (message: string, err: unknown) => void
   }
@@ -117,17 +147,20 @@ export interface StartDiscoveryJobReport {
 }
 
 /**
- * Insert a `running` job row and kick off the discovery in the background.
+ * Insert a `running` job row and launch the out-of-band discovery executor.
  *
- * The synchronous return path tells the MCP caller it can stop waiting and
- * start polling. The background work is responsible for transitioning the
- * row to `completed` (with the serialised report) or `failed` (with the
- * error metadata) before it exits.
+ * Returns as soon as the executor has been *accepted* so the MCP caller can
+ * stop waiting and start polling `readDiscoveryJobStatus`. The executor
+ * (a Cloud Run Job in production) is responsible for transitioning the row
+ * to `completed` / `failed` via `runDiscoveryAndPersist` before it exits.
+ *
+ * If the launch fails after the row is inserted, the `running` row would be
+ * orphaned (no executor will ever finish it), so we best-effort mark it
+ * `failed` before surfacing the launch error.
  */
 export function startDiscoveryJob(
   args: StartDiscoveryJobArgs,
 ): ResultAsync<StartDiscoveryJobReport, StartDiscoveryJobError> {
-  const spawn = args.spawn ?? voidSpawn
   const generateJobId = args.generateJobId ?? uuidv4
   const jobId = generateJobId()
   const startedAt = args.now().toISOString()
@@ -150,9 +183,47 @@ export function startDiscoveryJob(
       type: 'persist',
       message: `Failed to insert discovery_jobs row: ${err.message}`,
     }))
-    .map<StartDiscoveryJobReport>(() => {
-      spawn(() => runDiscoveryAndPersist(jobId, args))
-      return { jobId }
+    .andThen(() => launchOrCleanup(jobId, args))
+}
+
+/**
+ * Launch the executor; on launch failure, best-effort transition the
+ * orphaned `running` row to `failed` and surface the launch error either
+ * way.
+ */
+function launchOrCleanup(
+  jobId: string,
+  args: StartDiscoveryJobArgs,
+): ResultAsync<StartDiscoveryJobReport, StartDiscoveryJobError> {
+  return args
+    .launch({ jobId, filter: args.filter })
+    .map<StartDiscoveryJobReport>(() => ({ jobId }))
+    .orElse((launchErr) => {
+      const failure: StartDiscoveryJobError = {
+        type: 'launch',
+        message: launchErr.message,
+      }
+      return args.jobsAccessor
+        .markJobFinished({
+          jobId,
+          finishedAt: args.now().toISOString(),
+          status: 'failed',
+          errorType: 'launch',
+          errorMessage: launchErr.message,
+          result: null,
+        })
+        .andThen(() =>
+          errAsync<StartDiscoveryJobReport, StartDiscoveryJobError>(failure),
+        )
+        .orElse((cleanupErr) => {
+          args.logger?.error(
+            `Failed to mark job ${jobId} failed after launch error`,
+            cleanupErr,
+          )
+          return errAsync<StartDiscoveryJobReport, StartDiscoveryJobError>(
+            failure,
+          )
+        })
     })
 }
 
@@ -161,7 +232,7 @@ export function startDiscoveryJob(
  */
 export async function runDiscoveryAndPersist(
   jobId: string,
-  args: StartDiscoveryJobArgs,
+  args: RunDiscoveryAndPersistArgs,
 ): Promise<void> {
   const recorder = buildJobScopedRecorder(
     jobId,

@@ -13,6 +13,19 @@ import type {
 import type { FirestoreClientLike } from '../../../../src/compliance/state/firestore-jobs.ts'
 import type { Config } from '../../src/config'
 
+// The default start runner triggers the real Cloud Run launcher; mock the
+// token source so it never touches application-default credentials.
+const { mockGetAccessToken } = vi.hoisted(() => ({
+  mockGetAccessToken: vi.fn<() => Promise<string | null | undefined>>(() =>
+    Promise.resolve('test-token'),
+  ),
+}))
+vi.mock('google-auth-library', () => ({
+  GoogleAuth: class {
+    getAccessToken = mockGetAccessToken
+  },
+}))
+
 function makeFakeFirestore(): FirestoreClientLike {
   const docs = new Map<string, Record<string, unknown>>()
   return {
@@ -65,6 +78,8 @@ const testConfig: Config = {
   LOG_LEVEL: 'info' as const,
   PROJECT_ID: 'test-project',
   DATASET_CANON: 'donations',
+  REGION: 'us-central1',
+  COMPLIANCE_DISCOVER_JOB_NAME: 'compliance-discover',
   GOOGLE_CLIENT_ID: 'test-client-id',
   BASE_URL: 'https://mcp.example.com',
   GOOGLE_CLIENT_SECRET: 'test-secret',
@@ -177,9 +192,9 @@ describe('handleComplianceDiscoverStart', () => {
     expect(result.error.type).toBe('persist')
   })
 
-  it('surfaces a wiring error from the runner', async () => {
+  it('surfaces a launch error from the runner', async () => {
     const runner = vi.fn<DiscoverStartRunner>(() =>
-      errAsync({ type: 'wiring' as const, message: 'reg conflict' }),
+      errAsync({ type: 'launch' as const, message: 'run rejected' }),
     )
     const result = await handleComplianceDiscoverStart(
       { confirm: true },
@@ -192,7 +207,7 @@ describe('handleComplianceDiscoverStart', () => {
     )
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
-    expect(result.error.type).toBe('wiring')
+    expect(result.error.type).toBe('launch')
   })
 })
 
@@ -332,8 +347,8 @@ describe('translateStartError / translateStatusError / translateResultError', ()
       type: 'persist',
       message: 'x',
     })
-    expect(translateStartError({ type: 'wiring', message: 'x' })).toEqual({
-      type: 'wiring',
+    expect(translateStartError({ type: 'launch', message: 'x' })).toEqual({
+      type: 'launch',
       message: 'x',
     })
     expect(translateStatusError({ type: 'not_found', message: 'x' })).toEqual({
@@ -360,17 +375,38 @@ describe('translateStartError / translateStatusError / translateResultError', ()
 })
 
 describe('default discover runners', () => {
-  it('are callable functions that return ResultAsync values', () => {
+  it('are callable functions that return ResultAsync values', async () => {
     expect(typeof defaultDiscoverStartRunner).toBe('function')
     expect(typeof defaultDiscoverStatusRunner).toBe('function')
     expect(typeof defaultDiscoverResultRunner).toBe('function')
     const firestore = makeFakeFirestore()
-    const start = defaultDiscoverStartRunner({
-      projectId: 'test-project',
-      filter: { sources: null, jurisdictionId: null },
-      firestore,
-    })
-    expect(typeof start.match).toBe('function')
+
+    // The start runner triggers the real Cloud Run launcher; the token is
+    // mocked above, so stub the global fetch to issue a fake `:run` POST
+    // instead of a real network call.
+    const originalFetch = globalThis.fetch
+    const stubbedFetch: typeof fetch = Object.assign(
+      async () => new Response(JSON.stringify({ name: 'op' }), { status: 200 }),
+      {
+        preconnect: (): void => {
+          /* no-op stub */
+        },
+      },
+    )
+    globalThis.fetch = stubbedFetch
+    try {
+      const start = await defaultDiscoverStartRunner({
+        projectId: 'test-project',
+        region: 'us-central1',
+        jobName: 'compliance-discover',
+        filter: { sources: null, jurisdictionId: null },
+        firestore,
+      })
+      expect(start.isOk()).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+
     const status = defaultDiscoverStatusRunner({
       projectId: 'test-project',
       jobId: JOB_ID,

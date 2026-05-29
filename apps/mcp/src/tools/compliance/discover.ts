@@ -2,11 +2,13 @@
  * MCP tools: compliance-discover-start, -status, -result.
  *
  * Async-job control surface for compliance discovery. `start` returns a
- * job id immediately and kicks the discovery run off in the background;
- * `status` polls progress; `result` fetches the final report.
+ * job id immediately and triggers an out-of-band Cloud Run Job execution
+ * that runs the discovery; `status` polls progress; `result` fetches the
+ * final report.
  *
- * `start` mutates BigQuery (writes a discovery_jobs row + downstream
- * discovery_runs/findings rows), so it requires `confirm: true`.
+ * `start` writes a discovery_jobs row and launches the executor (which
+ * writes downstream discovery_runs/findings rows), so it requires
+ * `confirm: true`.
  */
 import { err, ok, type Result } from 'neverthrow'
 import type { Logger } from 'pino'
@@ -31,7 +33,7 @@ import type { Config } from '../../config'
  * Error envelope for the start tool.
  */
 export interface DiscoverStartError {
-  readonly type: 'unconfirmed' | 'persist' | 'wiring'
+  readonly type: 'unconfirmed' | 'persist' | 'launch'
   readonly message: string
 }
 
@@ -75,6 +77,8 @@ export const DiscoverStartInputSchema = {
  */
 export type DiscoverStartRunner = (args: {
   readonly projectId: string
+  readonly region: string
+  readonly jobName: string
   readonly filter: DiscoveryJobFilter
   readonly firestore: FirestoreClientLike
 }) => ReturnType<typeof startDiscoveryJobProduction>
@@ -93,9 +97,18 @@ export type DiscoverResultRunner = (args: {
 
 export const defaultDiscoverStartRunner: DiscoverStartRunner = ({
   projectId,
+  region,
+  jobName,
   filter,
   firestore,
-}) => startDiscoveryJobProduction({ projectId, filter, firestore })
+}) =>
+  startDiscoveryJobProduction({
+    projectId,
+    region,
+    jobName,
+    filter,
+    firestore,
+  })
 
 export const defaultDiscoverStatusRunner: DiscoverStatusRunner = ({
   projectId,
@@ -207,6 +220,8 @@ export async function handleComplianceDiscoverStart(
   const runner = resolveDiscoverStartRunner(deps.runDiscoverStart)
   const result = await runner({
     projectId: deps.config.PROJECT_ID,
+    region: deps.config.REGION,
+    jobName: deps.config.COMPLIANCE_DISCOVER_JOB_NAME,
     filter: toJobFilter(input),
     firestore: deps.firestore,
   })

@@ -27,9 +27,11 @@ Branch: `feat/compliance-mcp-and-plugin`
 
 ### 2b. `discover-job` pure backend
 
-- [x] `src/compliance/skills/discover-job.ts` — exports `startDiscoveryJob`, `readDiscoveryJobStatus`, `readDiscoveryJobResult`. Port-shaped: takes accessors + a job-id-tagging recorder + a "spawn discovery" callback.
-- [x] `src/compliance/skills/discover-job-wiring.ts` — production wiring; defaults the spawn callback to `runDiscoveryProduction` invoked fire-and-forget with a `RunRecorder` decorator that tags each row with `job_id`.
-- [x] Tests cover: happy path (start → status running → status completed → result), failure path (spawn throws → job marked failed), filter parameters (sources / jurisdictionId), `confirm:true` gate.
+- [x] `src/compliance/skills/discover-job.ts` — exports `startDiscoveryJob`, `runDiscoveryAndPersist`, `readDiscoveryJobStatus`, `readDiscoveryJobResult`. Port-shaped: `startDiscoveryJob` takes the jobs accessor + an injectable `LaunchDiscovery`; `runDiscoveryAndPersist` (the executor body) takes the accessors + a job-id-tagging recorder.
+- [x] `src/compliance/state/cloud-run-jobs.ts` — `createCloudRunJobLauncher`: a `LaunchDiscovery` that triggers a Cloud Run Job execution via the `:run` REST endpoint (token from `google-auth-library`), passing the job id + filter as container env overrides.
+- [x] `src/compliance/skills/discover-job-wiring.ts` — production wiring; `startDiscoveryJobProduction` inserts the row + launches the Cloud Run Job, `executeDiscoveryJobProduction` runs the discovery in the Job process, `parseDiscoverJobEnv` parses the Job's env.
+- [x] `apps/mcp/src/compliance-discover-job.ts` — Cloud Run Job entrypoint (bundled into the MCP image; selected via a command override on the Job). `scripts/deploy-mcp.sh` creates/updates the `compliance-discover` Job and grants the runtime SA permission to run it.
+- [x] Tests cover: happy path (start → launch → executor → status completed → result), launch-failure (orphaned row marked failed), executor failure paths (discovery error / thrown / wiring), filter parameters (sources / jurisdictionId), env parsing, `confirm:true` gate.
 
 ### 2c. `onboard-update` pure backend
 

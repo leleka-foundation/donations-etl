@@ -5,9 +5,11 @@
  * verify the wiring side: filter-aware registry construction and the
  * GCP-backed default deps.
  */
+import { errAsync, okAsync } from 'neverthrow'
 import { describe, expect, it, vi } from 'vitest'
 import { usCaJurisdiction } from '../jurisdictions/us-ca/index.ts'
 import { usFederalJurisdiction } from '../jurisdictions/us-federal/index.ts'
+import type { LaunchDiscovery } from '../skills/discover-job.ts'
 import type { FirestoreClientLike } from '../state/firestore-jobs.ts'
 
 /**
@@ -80,16 +82,33 @@ vi.mock('@google-cloud/secret-manager', () => ({
   },
 }))
 
+// Mock the token source so the default Cloud Run launcher (used when the
+// caller omits `launch`) doesn't touch application-default credentials.
+const { mockGetAccessToken } = vi.hoisted(() => ({
+  mockGetAccessToken: vi.fn<() => Promise<string | null | undefined>>(() =>
+    Promise.resolve('test-token'),
+  ),
+}))
+vi.mock('google-auth-library', () => ({
+  GoogleAuth: class {
+    getAccessToken = mockGetAccessToken
+  },
+}))
+
 const { BigQuery } = await import('@google-cloud/bigquery')
 const { SecretManagerServiceClient } =
   await import('@google-cloud/secret-manager')
 const {
   buildFilteredRegistry,
   defaultDiscoverJobFetch,
+  executeDiscoveryJobProduction,
+  parseDiscoverJobEnv,
   readDiscoveryJobResultProduction,
   readDiscoveryJobStatusProduction,
   startDiscoveryJobProduction,
 } = await import('../skills/discover-job-wiring.ts')
+
+const JOB_ID = '11111111-1111-4111-8111-111111111111'
 
 describe('defaultDiscoverJobFetch', () => {
   it('delegates to the global fetch', async () => {
@@ -187,106 +206,153 @@ describe('buildFilteredRegistry', () => {
 })
 
 describe('startDiscoveryJobProduction', () => {
-  it('returns a wiring error when the registry build fails', async () => {
-    const result = await startDiscoveryJobProduction({
-      projectId: 'my-proj',
-      filter: { sources: null, jurisdictionId: null },
-      jurisdictions: [usFederalJurisdiction, usFederalJurisdiction],
-      bqFactory: (projectId) => new BigQuery({ projectId }),
-      secretManagerFactory: () => new SecretManagerServiceClient(),
-      firestore: makeFakeFirestore(),
-      spawn: () => undefined,
-    })
-    expect(result.isErr()).toBe(true)
-    if (!result.isErr()) return
-    expect(result.error.type).toBe('wiring')
-  })
-
-  it('writes the discovery_jobs document to Firestore when registry build succeeds', async () => {
-    mockBqQuery.mockReset()
-    mockBqQuery.mockResolvedValue([[], {}])
-    mockBqDataset.mockReturnValue({
-      exists: vi.fn<() => Promise<unknown>>(() => Promise.resolve([true])),
-      createTable: vi.fn<(id: string, opts: unknown) => Promise<unknown>>(() =>
-        Promise.resolve([{}]),
-      ),
-      table: vi.fn<(id: string) => { exists: () => Promise<unknown> }>(() => ({
-        exists: vi.fn<() => Promise<unknown>>(() => Promise.resolve([true])),
-      })),
-    })
-
-    // Pass our fake explicitly so we can inspect it afterwards.
+  it('writes the running job doc to Firestore and triggers the launcher', async () => {
     const fakeFirestore = makeFakeFirestore()
+    const launchMock = vi.fn<LaunchDiscovery>(() => okAsync(undefined))
+
     const result = await startDiscoveryJobProduction({
       projectId: 'my-proj',
-      filter: { sources: null, jurisdictionId: null },
-      bqFactory: (projectId) => new BigQuery({ projectId }),
-      secretManagerFactory: () => new SecretManagerServiceClient(),
+      region: 'us-central1',
+      jobName: 'compliance-discover',
+      filter: { sources: ['irs-eo-bmf'], jurisdictionId: 'us-federal' },
       firestore: fakeFirestore,
-      // Suppress background spawn so the test stays deterministic.
-      spawn: () => undefined,
-      generateJobId: () => '11111111-1111-4111-8111-111111111111',
+      launch: launchMock,
+      generateJobId: () => JOB_ID,
     })
 
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
-    expect(result.value.jobId).toBe('11111111-1111-4111-8111-111111111111')
-    // The job doc must be writable to / readable from Firestore.
-    const snap = await fakeFirestore
-      .doc('mcp_compliance_jobs/11111111-1111-4111-8111-111111111111')
-      .get()
+    expect(result.value.jobId).toBe(JOB_ID)
+
+    const snap = await fakeFirestore.doc(`mcp_compliance_jobs/${JOB_ID}`).get()
     expect(snap.exists).toBe(true)
     expect(snap.data()?.status).toBe('running')
+
+    expect(launchMock).toHaveBeenCalledTimes(1)
+    expect(launchMock.mock.calls[0]?.[0]).toEqual({
+      jobId: JOB_ID,
+      filter: { sources: ['irs-eo-bmf'], jurisdictionId: 'us-federal' },
+    })
   })
 
-  it('invokes the background discovery runner when spawned', async () => {
-    mockBqQuery.mockReset()
-    mockBqQuery.mockResolvedValue([[], {}])
-    mockBqDataset.mockReturnValue({
-      exists: vi.fn<() => Promise<unknown>>(() => Promise.resolve([true])),
-      createTable: vi.fn<(id: string, opts: unknown) => Promise<unknown>>(() =>
-        Promise.resolve([{}]),
-      ),
-      table: vi.fn<(id: string) => { exists: () => Promise<unknown> }>(() => ({
-        exists: vi.fn<() => Promise<unknown>>(() => Promise.resolve([true])),
-      })),
+  it('returns a launch error and marks the job failed when the launcher fails', async () => {
+    const fakeFirestore = makeFakeFirestore()
+    const result = await startDiscoveryJobProduction({
+      projectId: 'my-proj',
+      region: 'us-central1',
+      jobName: 'compliance-discover',
+      filter: { sources: null, jurisdictionId: null },
+      firestore: fakeFirestore,
+      launch: () =>
+        errAsync({ type: 'launch' as const, message: 'run rejected' }),
+      generateJobId: () => JOB_ID,
     })
-    mockSmAccess.mockResolvedValue([
+
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.type).toBe('launch')
+
+    const snap = await fakeFirestore.doc(`mcp_compliance_jobs/${JOB_ID}`).get()
+    expect(snap.data()?.status).toBe('failed')
+    expect(snap.data()?.error_type).toBe('launch')
+  })
+
+  it('uses the system clock + the default Cloud Run launcher when neither is supplied', async () => {
+    // Omitting `launch` exercises the `?? createCloudRunJobLauncher(...)`
+    // default path. We stub the global fetch + token so it issues a fake
+    // `:run` POST instead of a real network call.
+    const originalFetch = globalThis.fetch
+    // Record the requested URL as a string (the launcher always passes a
+    // string), so the assertion never stringifies a URL/Request object.
+    const fetchSpy = vi.fn<(url: string) => Promise<Response>>(
+      async () => new Response(JSON.stringify({ name: 'op' }), { status: 200 }),
+    )
+    const stubbedFetch: typeof fetch = Object.assign(
+      (input: string | URL | Request) => {
+        let key: string
+        if (typeof input === 'string') {
+          key = input
+        } else if (input instanceof URL) {
+          key = input.href
+        } else {
+          key = input.url
+        }
+        return fetchSpy(key)
+      },
       {
-        payload: {
-          data: Buffer.from(
-            JSON.stringify({
-              'us-federal': { ein: '12-3456789' },
-              'us-ca': { sosEntityNumber: 'C0123456' },
-            }),
-            'utf8',
-          ),
+        preconnect: (): void => {
+          /* no-op stub */
         },
       },
-    ])
-
-    const spawnedPromises: Promise<void>[] = []
-    const recordingSpawn = (run: () => Promise<void>): void => {
-      spawnedPromises.push(run())
+    )
+    globalThis.fetch = stubbedFetch
+    try {
+      const fakeFirestore = makeFakeFirestore()
+      const result = await startDiscoveryJobProduction({
+        projectId: 'my-proj',
+        region: 'us-central1',
+        jobName: 'compliance-discover',
+        filter: { sources: null, jurisdictionId: null },
+        firestore: fakeFirestore,
+        generateJobId: () => JOB_ID,
+      })
+      expect(result.isOk()).toBe(true)
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/jobs/compliance-discover:run'),
+      )
+    } finally {
+      globalThis.fetch = originalFetch
     }
-    const result = await startDiscoveryJobProduction({
+  })
+})
+
+describe('executeDiscoveryJobProduction', () => {
+  it('marks the job failed with a wiring error when the registry build fails', async () => {
+    const fakeFirestore = makeFakeFirestore()
+    await executeDiscoveryJobProduction({
       projectId: 'my-proj',
-      filter: { sources: [], jurisdictionId: null },
+      jobId: JOB_ID,
+      filter: { sources: null, jurisdictionId: null },
+      firestore: fakeFirestore,
+      // Duplicate jurisdiction ids force a registration conflict.
+      jurisdictions: [usFederalJurisdiction, usFederalJurisdiction],
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
-      firestore: makeFakeFirestore(),
-      spawn: recordingSpawn,
-      generateJobId: () => '22222222-2222-4222-8222-222222222222',
     })
-    expect(result.isOk()).toBe(true)
-    await Promise.all(spawnedPromises)
-    // Some discovery_runs or discovery_jobs INSERTs were issued by the
-    // background flow; we don't pin specific counts here since the
-    // production discovery code does several BQ writes.
-    expect(mockBqQuery).toHaveBeenCalled()
+
+    const snap = await fakeFirestore.doc(`mcp_compliance_jobs/${JOB_ID}`).get()
+    expect(snap.data()?.status).toBe('failed')
+    expect(snap.data()?.error_type).toBe('wiring')
   })
 
-  it('uses the system clock when `now` is not supplied', async () => {
+  it('logs when the wiring-error status write fails', async () => {
+    // A Firestore whose update() rejects so the markJobFinished cleanup
+    // fails and the logger branch is exercised.
+    const failingFirestore: FirestoreClientLike = {
+      doc() {
+        return {
+          get: () => Promise.resolve({ exists: false, data: () => undefined }),
+          set: () => Promise.resolve(),
+          update: () => Promise.reject(new Error('firestore down')),
+        }
+      },
+    }
+    const logger = { error: vi.fn<(m: string, e: unknown) => void>() }
+    await executeDiscoveryJobProduction({
+      projectId: 'my-proj',
+      jobId: JOB_ID,
+      filter: { sources: null, jurisdictionId: null },
+      firestore: failingFirestore,
+      jurisdictions: [usFederalJurisdiction, usFederalJurisdiction],
+      bqFactory: (projectId) => new BigQuery({ projectId }),
+      secretManagerFactory: () => new SecretManagerServiceClient(),
+      logger,
+    })
+    expect(logger.error).toHaveBeenCalledTimes(1)
+    expect(logger.error.mock.calls[0]?.[0]).toContain('wiring-error status')
+  })
+
+  it('runs discovery and transitions the job to a terminal status', async () => {
     mockBqQuery.mockReset()
     mockBqQuery.mockResolvedValue([[], {}])
     mockBqDataset.mockReturnValue({
@@ -298,15 +364,77 @@ describe('startDiscoveryJobProduction', () => {
         exists: vi.fn<() => Promise<unknown>>(() => Promise.resolve([true])),
       })),
     })
-    const result = await startDiscoveryJobProduction({
+
+    const fakeFirestore = makeFakeFirestore()
+    // Seed the running row the start path would have inserted.
+    await fakeFirestore.doc(`mcp_compliance_jobs/${JOB_ID}`).set({
+      job_id: JOB_ID,
+      started_at: '2024-05-01T00:00:00Z',
+      finished_at: null,
+      status: 'running',
+      requested_sources: [],
+      requested_jurisdiction: null,
+      error_type: null,
+      error_message: null,
+      result: null,
+    })
+
+    // An empty sources filter resolves to an empty registry, so discovery
+    // completes without launching a browser.
+    await executeDiscoveryJobProduction({
       projectId: 'my-proj',
-      filter: { sources: null, jurisdictionId: null },
+      jobId: JOB_ID,
+      filter: { sources: [], jurisdictionId: null },
+      firestore: fakeFirestore,
       bqFactory: (projectId) => new BigQuery({ projectId }),
       secretManagerFactory: () => new SecretManagerServiceClient(),
-      firestore: makeFakeFirestore(),
-      spawn: () => undefined,
     })
-    expect(result.isOk()).toBe(true)
+
+    expect(mockBqQuery).toHaveBeenCalled()
+    const snap = await fakeFirestore.doc(`mcp_compliance_jobs/${JOB_ID}`).get()
+    // Terminal: either completed or failed, but no longer running.
+    expect(snap.data()?.status).not.toBe('running')
+    expect(snap.data()?.finished_at).not.toBeNull()
+  })
+})
+
+describe('parseDiscoverJobEnv', () => {
+  it('parses the job id and treats an absent DISCOVERY_SOURCES as all sources', () => {
+    const parsed = parseDiscoverJobEnv({
+      PROJECT_ID: 'my-proj',
+      DISCOVERY_JOB_ID: JOB_ID,
+    })
+    expect(parsed).toEqual({
+      projectId: 'my-proj',
+      jobId: JOB_ID,
+      filter: { sources: null, jurisdictionId: null },
+    })
+  })
+
+  it('splits a comma-separated DISCOVERY_SOURCES and carries the jurisdiction', () => {
+    const parsed = parseDiscoverJobEnv({
+      PROJECT_ID: 'my-proj',
+      DISCOVERY_JOB_ID: JOB_ID,
+      DISCOVERY_SOURCES: 'irs-teos, ca-ag-registry',
+      DISCOVERY_JURISDICTION_ID: 'us-ca',
+    })
+    expect(parsed.filter).toEqual({
+      sources: ['irs-teos', 'ca-ag-registry'],
+      jurisdictionId: 'us-ca',
+    })
+  })
+
+  it('treats an empty DISCOVERY_SOURCES as all sources', () => {
+    const parsed = parseDiscoverJobEnv({
+      PROJECT_ID: 'my-proj',
+      DISCOVERY_JOB_ID: JOB_ID,
+      DISCOVERY_SOURCES: '',
+    })
+    expect(parsed.filter.sources).toBeNull()
+  })
+
+  it('throws when DISCOVERY_JOB_ID is missing', () => {
+    expect(() => parseDiscoverJobEnv({ PROJECT_ID: 'my-proj' })).toThrow()
   })
 })
 

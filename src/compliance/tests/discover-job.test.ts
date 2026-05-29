@@ -17,10 +17,9 @@ import {
   readDiscoveryJobStatus,
   runDiscoveryAndPersist,
   startDiscoveryJob,
-  voidSpawn,
+  type LaunchDiscovery,
+  type RunDiscoveryAndPersistArgs,
   type RunDiscoveryForJob,
-  type SpawnDiscoveryJob,
-  type StartDiscoveryJobArgs,
 } from '../skills/discover-job.ts'
 import type { DiscoveryReport } from '../skills/discover.ts'
 import type { FindingsAccessor } from '../state/bq-findings.ts'
@@ -128,18 +127,17 @@ const STUB_REPORT: DiscoveryReport = {
   },
 }
 
-function recordingSpawn(): {
-  spawn: SpawnDiscoveryJob
-  waitAll: () => Promise<void>
+/**
+ * A launcher that records its calls. Defaults to accepting the launch
+ * (`okAsync`); tests pass an impl that returns an err to exercise the
+ * launch-failure path.
+ */
+function recordingLaunch(impl: LaunchDiscovery = () => okAsync(undefined)): {
+  launch: LaunchDiscovery
+  mock: ReturnType<typeof vi.fn<LaunchDiscovery>>
 } {
-  const promises: Promise<void>[] = []
-  const spawn: SpawnDiscoveryJob = (run) => {
-    promises.push(run())
-  }
-  return {
-    spawn,
-    waitAll: () => Promise.all(promises).then(() => undefined),
-  }
+  const mock = vi.fn<LaunchDiscovery>(impl)
+  return { launch: mock, mock }
 }
 
 /**
@@ -152,14 +150,6 @@ function throwingDiscovery(thrown: unknown): RunDiscoveryForJob {
     throw thrown
   }
 }
-
-describe('voidSpawn', () => {
-  it('invokes the supplied callback (and discards the promise)', () => {
-    const run = vi.fn(() => Promise.resolve())
-    voidSpawn(run)
-    expect(run).toHaveBeenCalledTimes(1)
-  })
-})
 
 describe('buildJobScopedRecorder', () => {
   it('tags every run row with the parent job id', async () => {
@@ -198,23 +188,15 @@ describe('buildJobScopedRecorder', () => {
 })
 
 describe('startDiscoveryJob', () => {
-  it('defaults the spawn and id-generator when neither is supplied', async () => {
+  it('defaults the id-generator when not supplied', async () => {
     const jobs = fakeJobs()
-    const runs = fakeRuns()
-    const findings = fakeFindings()
-
-    // No spawn / generateJobId — defaults exercise the production code paths
-    // (voidSpawn + uuidv4). Underlying discovery is forced to succeed so the
-    // fire-and-forget completes silently.
-    const runDiscovery = vi.fn(() => okAsync(STUB_REPORT))
+    const { launch } = recordingLaunch()
 
     const result = await startDiscoveryJob({
       jobsAccessor: jobs,
-      runsAccessor: runs,
-      findingsAccessor: findings,
       now: fixedNow,
       filter: { sources: null, jurisdictionId: null },
-      runDiscovery,
+      launch,
     })
 
     expect(result.isOk()).toBe(true)
@@ -223,57 +205,130 @@ describe('startDiscoveryJob', () => {
     expect(result.value.jobId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  it('inserts a running row and returns the new job id', async () => {
+  it('inserts a running row, launches the executor, and returns the job id', async () => {
     const jobs = fakeJobs()
-    const runs = fakeRuns()
-    const findings = fakeFindings()
-    const { spawn, waitAll } = recordingSpawn()
-
-    const runDiscovery = vi.fn(() => okAsync(STUB_REPORT))
+    const { launch, mock } = recordingLaunch()
 
     const result = await startDiscoveryJob({
       jobsAccessor: jobs,
-      runsAccessor: runs,
-      findingsAccessor: findings,
       now: fixedNow,
-      filter: { sources: null, jurisdictionId: null },
-      runDiscovery,
-      spawn,
+      filter: { sources: ['irs-teos'], jurisdictionId: 'us-federal' },
+      launch,
       generateJobId: () => JOB_ID,
     })
 
     expect(result.isOk()).toBe(true)
     if (!result.isOk()) return
     expect(result.value.jobId).toBe(JOB_ID)
+
     expect(jobs.recordMock).toHaveBeenCalledTimes(1)
     const insertedRow: ComplianceDiscoveryJobRow | undefined =
       jobs.recordMock.mock.calls[0]?.[0]
     expect(insertedRow?.job_id).toBe(JOB_ID)
     expect(insertedRow?.status).toBe('running')
     expect(insertedRow?.finished_at).toBeNull()
-    await waitAll()
+
+    // The launcher was handed the job id + filter to trigger the executor.
+    expect(mock).toHaveBeenCalledTimes(1)
+    expect(mock.mock.calls[0]?.[0]).toEqual({
+      jobId: JOB_ID,
+      filter: { sources: ['irs-teos'], jurisdictionId: 'us-federal' },
+    })
+    // The start path itself never runs discovery / finishes the job.
+    expect(jobs.finishMock).not.toHaveBeenCalled()
   })
 
+  it('returns a persist error when recordJob fails (and does not launch)', async () => {
+    const jobs = fakeJobs()
+    jobs.recordMock.mockReturnValueOnce(
+      errAsync({ type: 'query', message: 'BQ down' }),
+    )
+    const { launch, mock } = recordingLaunch()
+
+    const result = await startDiscoveryJob({
+      jobsAccessor: jobs,
+      now: fixedNow,
+      filter: { sources: null, jurisdictionId: null },
+      launch,
+      generateJobId: () => JOB_ID,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.type).toBe('persist')
+    expect(result.error.message).toContain('BQ down')
+    expect(mock).not.toHaveBeenCalled()
+  })
+
+  it('returns a launch error and marks the orphaned job failed when the launch fails', async () => {
+    const jobs = fakeJobs()
+    const { launch } = recordingLaunch(() =>
+      errAsync({ type: 'launch', message: 'Cloud Run rejected the run' }),
+    )
+
+    const result = await startDiscoveryJob({
+      jobsAccessor: jobs,
+      now: fixedNow,
+      filter: { sources: null, jurisdictionId: null },
+      launch,
+      generateJobId: () => JOB_ID,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.type).toBe('launch')
+    expect(result.error.message).toContain('Cloud Run rejected')
+
+    // The orphaned `running` row is transitioned to failed.
+    expect(jobs.finishMock).toHaveBeenCalledTimes(1)
+    const finishCall = jobs.finishMock.mock.calls[0]?.[0]
+    expect(finishCall?.status).toBe('failed')
+    expect(finishCall?.errorType).toBe('launch')
+  })
+
+  it('still surfaces the launch error (and logs) when the cleanup write also fails', async () => {
+    const jobs = fakeJobs()
+    jobs.finishMock.mockReturnValueOnce(
+      errAsync({ type: 'query', message: 'firestore down' }),
+    )
+    const { launch } = recordingLaunch(() =>
+      errAsync({ type: 'launch', message: 'Cloud Run rejected the run' }),
+    )
+    const logger = {
+      error: vi.fn<(message: string, err: unknown) => void>(),
+    }
+
+    const result = await startDiscoveryJob({
+      jobsAccessor: jobs,
+      now: fixedNow,
+      filter: { sources: null, jurisdictionId: null },
+      launch,
+      generateJobId: () => JOB_ID,
+      logger,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.type).toBe('launch')
+    expect(logger.error).toHaveBeenCalledTimes(1)
+    expect(logger.error.mock.calls[0]?.[0]).toContain('after launch error')
+  })
+})
+
+describe('runDiscoveryAndPersist', () => {
   it('persists a completed status with the serialised report when discovery succeeds', async () => {
     const jobs = fakeJobs()
     const runs = fakeRuns()
     const findings = fakeFindings()
-    const { spawn, waitAll } = recordingSpawn()
 
-    const runDiscovery = vi.fn(() => okAsync(STUB_REPORT))
-
-    const result = await startDiscoveryJob({
+    await runDiscoveryAndPersist(JOB_ID, {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
       now: fixedNow,
       filter: { sources: ['irs-teos'], jurisdictionId: 'us-federal' },
-      runDiscovery,
-      spawn,
-      generateJobId: () => JOB_ID,
+      runDiscovery: () => okAsync(STUB_REPORT),
     })
-    expect(result.isOk()).toBe(true)
-    await waitAll()
 
     expect(jobs.finishMock).toHaveBeenCalledTimes(1)
     const finishCall = jobs.finishMock.mock.calls[0]?.[0]
@@ -286,27 +341,19 @@ describe('startDiscoveryJob', () => {
     const jobs = fakeJobs()
     const runs = fakeRuns()
     const findings = fakeFindings()
-    const { spawn, waitAll } = recordingSpawn()
 
-    const runDiscovery = vi.fn(() =>
-      errAsync({
-        type: 'not_onboarded' as const,
-        message: 'Run compliance-onboard first',
-      }),
-    )
-
-    const result = await startDiscoveryJob({
+    await runDiscoveryAndPersist(JOB_ID, {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
       now: fixedNow,
       filter: { sources: null, jurisdictionId: null },
-      runDiscovery,
-      spawn,
-      generateJobId: () => JOB_ID,
+      runDiscovery: () =>
+        errAsync({
+          type: 'not_onboarded' as const,
+          message: 'Run compliance-onboard first',
+        }),
     })
-    expect(result.isOk()).toBe(true)
-    await waitAll()
 
     const finishCall = jobs.finishMock.mock.calls[0]?.[0]
     expect(finishCall?.status).toBe('failed')
@@ -315,12 +362,12 @@ describe('startDiscoveryJob', () => {
     expect(finishCall?.result).toBeNull()
   })
 
-  it('catches a thrown spawn error and persists status=failed with type=spawn', async () => {
+  it('catches a thrown error and persists status=failed with type=spawn', async () => {
     const jobs = fakeJobs()
     const runs = fakeRuns()
     const findings = fakeFindings()
 
-    const args: StartDiscoveryJobArgs = {
+    const args: RunDiscoveryAndPersistArgs = {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
@@ -341,7 +388,7 @@ describe('startDiscoveryJob', () => {
     const runs = fakeRuns()
     const findings = fakeFindings()
 
-    const args: StartDiscoveryJobArgs = {
+    const args: RunDiscoveryAndPersistArgs = {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
@@ -356,31 +403,6 @@ describe('startDiscoveryJob', () => {
     expect(finishCall?.errorMessage).toBe('connector exploded (string throw)')
   })
 
-  it('returns a persist error when recordJob fails', async () => {
-    const jobs = fakeJobs()
-    jobs.recordMock.mockReturnValueOnce(
-      errAsync({ type: 'query', message: 'BQ down' }),
-    )
-    const runs = fakeRuns()
-    const findings = fakeFindings()
-
-    const result = await startDiscoveryJob({
-      jobsAccessor: jobs,
-      runsAccessor: runs,
-      findingsAccessor: findings,
-      now: fixedNow,
-      filter: { sources: null, jurisdictionId: null },
-      runDiscovery: () => okAsync(STUB_REPORT),
-      spawn: voidSpawn,
-      generateJobId: () => JOB_ID,
-    })
-
-    expect(result.isErr()).toBe(true)
-    if (!result.isErr()) return
-    expect(result.error.type).toBe('persist')
-    expect(result.error.message).toContain('BQ down')
-  })
-
   it('logs but does not throw when markJobFinished fails after a successful run', async () => {
     const jobs = fakeJobs()
     jobs.finishMock.mockReturnValueOnce(
@@ -392,7 +414,7 @@ describe('startDiscoveryJob', () => {
       error: vi.fn<(message: string, err: unknown) => void>(),
     }
 
-    const args: StartDiscoveryJobArgs = {
+    await runDiscoveryAndPersist(JOB_ID, {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
@@ -400,8 +422,7 @@ describe('startDiscoveryJob', () => {
       filter: { sources: null, jurisdictionId: null },
       runDiscovery: () => okAsync(STUB_REPORT),
       logger,
-    }
-    await runDiscoveryAndPersist(JOB_ID, args)
+    })
 
     expect(logger.error).toHaveBeenCalledTimes(1)
     expect(logger.error.mock.calls[0]?.[0]).toContain('completed status')
@@ -418,7 +439,7 @@ describe('startDiscoveryJob', () => {
       error: vi.fn<(message: string, err: unknown) => void>(),
     }
 
-    const args: StartDiscoveryJobArgs = {
+    await runDiscoveryAndPersist(JOB_ID, {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
@@ -430,14 +451,13 @@ describe('startDiscoveryJob', () => {
           message: 'onboard first',
         }),
       logger,
-    }
-    await runDiscoveryAndPersist(JOB_ID, args)
+    })
 
     expect(logger.error).toHaveBeenCalledTimes(1)
     expect(logger.error.mock.calls[0]?.[0]).toContain('failed status')
   })
 
-  it('logs but does not throw when markJobFinished fails after a spawn-throw', async () => {
+  it('logs but does not throw when markJobFinished fails after a thrown error', async () => {
     const jobs = fakeJobs()
     jobs.finishMock.mockReturnValueOnce(
       errAsync({ type: 'query', message: 'BQ down' }),
@@ -448,7 +468,7 @@ describe('startDiscoveryJob', () => {
       error: vi.fn<(message: string, err: unknown) => void>(),
     }
 
-    const args: StartDiscoveryJobArgs = {
+    await runDiscoveryAndPersist(JOB_ID, {
       jobsAccessor: jobs,
       runsAccessor: runs,
       findingsAccessor: findings,
@@ -456,8 +476,7 @@ describe('startDiscoveryJob', () => {
       filter: { sources: null, jurisdictionId: null },
       runDiscovery: throwingDiscovery(new Error('boom')),
       logger,
-    }
-    await runDiscoveryAndPersist(JOB_ID, args)
+    })
 
     expect(logger.error).toHaveBeenCalledTimes(1)
     expect(logger.error.mock.calls[0]?.[0]).toContain('spawn-error')
